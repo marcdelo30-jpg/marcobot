@@ -70,10 +70,14 @@ class MyBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # Synchronisation instantanée sur ton serveur spécifique
+        # 1. Nettoie les anciennes commandes globales enregistrées en double
+        self.tree.clear_commands(guild=None)
+        await self.tree.sync(guild=None)
+
+        # 2. Synchronise uniquement sur ton serveur spécifique
         self.tree.copy_global_to(guild=GUILD_ID)
         await self.tree.sync(guild=GUILD_ID)
-        print(f"Commandes synchronisées instantanément sur le serveur pour {self.user}")
+        print(f"Commandes nettoyées et synchronisées instantanément pour {self.user}")
 
 client = MyBot()
 
