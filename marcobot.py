@@ -2,6 +2,9 @@ import os
 import discord
 from discord import app_commands
 
+# Ton ID de serveur Discord
+GUILD_ID = discord.Object(id=1359606058922017001)
+
 QUESTIONS_LIST = [
     {
         "question": "Quelle est la capitale de la France ?",
@@ -17,7 +20,7 @@ STAFF_IDS = [
 
 # Liste des ID Discord des Animateurs
 ANIMATEURS_IDS = [
-    1478789840270135406, 1524068660589625404, 1521936013017223408# Remplace par le vrai ID d'un animateur
+    1478789840270135406, 1524068660589625404, 1521936013017223408 # Remplace par le vrai ID d'un animateur
 ]
 
 class QuizView(discord.ui.View):
@@ -67,8 +70,10 @@ class MyBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        await self.tree.sync()
-        print(f"Commandes synchronisées pour {self.user}")
+        # Synchronisation instantanée sur ton serveur spécifique
+        self.tree.copy_global_to(guild=GUILD_ID)
+        await self.tree.sync(guild=GUILD_ID)
+        print(f"Commandes synchronisées instantanément sur le serveur pour {self.user}")
 
 client = MyBot()
 
@@ -91,6 +96,10 @@ async def quiz(interaction: discord.Interaction):
 
     await interaction.response.send_message(f"**Question :** {q['question']}", view=view)
 
+@client.tree.command(name="quete", description="Lance une quête sur le serveur !")
+async def quete(interaction: discord.Interaction):
+    await interaction.response.send_message("⚔️ La quête du serveur commence ! Préparez-vous !", ephemeral=False)
+
 @client.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz")
 @app_commands.checks.has_permissions(administrator=True)
 async def ajouter_quiz(interaction: discord.Interaction, question: str, choix1: str, choix2: str, choix3: str, bonne_reponse_numero: int):
@@ -110,6 +119,5 @@ async def ajouter_quiz(interaction: discord.Interaction, question: str, choix1: 
 async def ajouter_quiz_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ Tu n'as pas les permissions d'administrateur pour utiliser cette commande.", ephemeral=True)
-
 
 client.run(os.getenv("DISCORD_TOKEN"))
