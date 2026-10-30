@@ -67,8 +67,10 @@ class MyBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # Synchronisation directe et propre sur ton serveur
+        # Copie et synchronise les commandes pour qu'elles s'affichent sur le profil et sur le serveur
+        self.tree.copy_global_to(guild=GUILD_ID)
         await self.tree.sync(guild=GUILD_ID)
+        await self.tree.sync()  # Synchronisation globale pour le profil
         print(f"Commandes synchronisées pour {self.user}")
 
 client = MyBot()
