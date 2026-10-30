@@ -15,17 +15,17 @@ QUESTIONS_LIST = [
 
 # Liste des ID Discord des membres du Staff
 STAFF_IDS = [
-    1532919042837315654, # Remplace par le vrai ID d'un membre du staff
+    1532919042837315654, 
 ]
 
 # Liste des ID Discord des Animateurs
 ANIMATEURS_IDS = [
-    1478789840270135406, 1524068660589625404, 1521936013017223408 # Remplace par le vrai ID d'un animateur
+    1478789840270135406, 1524068660589625404, 1521936013017223408 
 ]
 
 class QuizView(discord.ui.View):
     def __init__(self, correct_index):
-        super().__init__(timeout=None) # Le quiz reste actif indéfiniment
+        super().__init__(timeout=None)
         self.correct_index = correct_index
 
     @discord.ui.button(label="1️⃣ Choix 1", style=discord.ButtonStyle.primary)
@@ -47,13 +47,9 @@ class QuizView(discord.ui.View):
                 child.disabled = True
             await interaction.message.edit(view=self)
 
-            # Message à envoyer
             message_alerte = f"🏆 **Alerte Quiz !** L'utilisateur **{interaction.user}** a réussi à trouver la bonne réponse sur le serveur **{interaction.guild.name}** !"
-
-            # Fusionne la liste du staff et des animateurs pour envoyer les MP à tout le monde
             tous_les_destinataires = STAFF_IDS + ANIMATEURS_IDS
 
-            # Envoi des MP
             for user_id in tous_les_destinataires:
                 try:
                     user_obj = await interaction.client.fetch_user(user_id)
@@ -70,14 +66,9 @@ class MyBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
-        # 1. Nettoie les anciennes commandes globales enregistrées en double
-        self.tree.clear_commands(guild=None)
-        await self.tree.sync(guild=None)
-
-        # 2. Synchronise uniquement sur ton serveur spécifique
-        self.tree.copy_global_to(guild=GUILD_ID)
+        # Synchronisation directe et propre sur ton serveur
         await self.tree.sync(guild=GUILD_ID)
-        print(f"Commandes nettoyées et synchronisées instantanément pour {self.user}")
+        print(f"Commandes synchronisées pour {self.user}")
 
 client = MyBot()
 
@@ -85,7 +76,8 @@ client = MyBot()
 async def on_ready():
     print(f"Connecté en tant que {client.user} (ID: {client.user.id})")
 
-@client.tree.command(name="quiz", description="Lance une question du quiz !")
+# 1. COMMANDE QUIZ (Accessible à tout le monde)
+@client.tree.command(name="quiz", description="Joue au quiz !", guild=GUILD_ID)
 async def quiz(interaction: discord.Interaction):
     if not QUESTIONS_LIST:
         await interaction.response.send_message("Aucune question disponible pour le moment !", ephemeral=True)
@@ -100,11 +92,8 @@ async def quiz(interaction: discord.Interaction):
 
     await interaction.response.send_message(f"**Question :** {q['question']}", view=view)
 
-@client.tree.command(name="quete", description="Lance une quête sur le serveur !")
-async def quete(interaction: discord.Interaction):
-    await interaction.response.send_message("⚔️ La quête du serveur commence ! Préparez-vous !", ephemeral=False)
-
-@client.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz")
+# 2. COMMANDE AJOUTER QUIZ (Réservée aux Administrateurs)
+@client.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz", guild=GUILD_ID)
 @app_commands.checks.has_permissions(administrator=True)
 async def ajouter_quiz(interaction: discord.Interaction, question: str, choix1: str, choix2: str, choix3: str, bonne_reponse_numero: int):
     if bonne_reponse_numero not in [1, 2, 3]:
@@ -122,6 +111,17 @@ async def ajouter_quiz(interaction: discord.Interaction, question: str, choix1: 
 @ajouter_quiz.error
 async def ajouter_quiz_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ Tu n'as pas les permissions d'administrateur pour utiliser cette commande.", ephemeral=True)
+        await interaction.response.send_message("❌ Seuls les administrateurs peuvent créer de nouvelles questions.", ephemeral=True)
+
+# 3. COMMANDE QUÊTE (Réservée aux Administrateurs)
+@client.tree.command(name="quete", description="[Admin] Lance une quête sur le serveur !", guild=GUILD_ID)
+@app_commands.checks.has_permissions(administrator=True)
+async def quete(interaction: discord.Interaction):
+    await interaction.response.send_message("⚔️ La quête du serveur commence ! Préparez-vous !", ephemeral=False)
+
+@quete.error
+async def quete_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message("❌ Seuls les administrateurs peuvent lancer une quête.", ephemeral=True)
 
 client.run(os.getenv("DISCORD_TOKEN"))
