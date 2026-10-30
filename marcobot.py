@@ -5,6 +5,7 @@ from discord import app_commands
 # Ton ID de serveur Discord
 GUILD_ID = discord.Object(id=1359606058922017001)
 
+# Liste stockant les questions créées dynamiquement par les admins
 QUESTIONS_LIST = [
     {
         "question": "Quelle est la capitale de la France ?",
@@ -76,8 +77,9 @@ client = MyBot()
 async def on_ready():
     print(f"Connecté en tant que {client.user} (ID: {client.user.id})")
 
-# 1. COMMANDE QUIZ (Accessible à tout le monde)
-@client.tree.command(name="quiz", description="Joue au quiz !", guild=GUILD_ID)
+# 1. COMMANDE QUIZ (Réservée aux Administrateurs)
+@client.tree.command(name="quiz", description="[Admin] Lance la question du quiz !", guild=GUILD_ID)
+@app_commands.checks.has_permissions(administrator=True)
 async def quiz(interaction: discord.Interaction):
     if not QUESTIONS_LIST:
         await interaction.response.send_message("Aucune question disponible pour le moment !", ephemeral=True)
@@ -91,6 +93,11 @@ async def quiz(interaction: discord.Interaction):
     view.children[2].label = q["options"][2]
 
     await interaction.response.send_message(f"**Question :** {q['question']}", view=view)
+
+@quiz.error
+async def quiz_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message("❌ Seuls les administrateurs peuvent lancer le quiz.", ephemeral=True)
 
 # 2. COMMANDE AJOUTER QUIZ (Réservée aux Administrateurs)
 @client.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz", guild=GUILD_ID)
@@ -113,15 +120,16 @@ async def ajouter_quiz_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ Seuls les administrateurs peuvent créer de nouvelles questions.", ephemeral=True)
 
-# 3. COMMANDE QUÊTE (Réservée aux Administrateurs)
-@client.tree.command(name="quete", description="[Admin] Lance une quête sur le serveur !", guild=GUILD_ID)
+# 3. COMMANDE AJOUTER QUÊTE (Réservée aux Administrateurs)
+@client.tree.command(name="ajouter_quete", description="[Admin] Écris et lance une quête sur le serveur !", guild=GUILD_ID)
 @app_commands.checks.has_permissions(administrator=True)
-async def quete(interaction: discord.Interaction):
-    await interaction.response.send_message("⚔️ La quête du serveur commence ! Préparez-vous !", ephemeral=False)
+async def ajouter_quete(interaction: discord.Interaction, texte_de_la_quete: str):
+    message_annonce = f"⚔️ **NOUVELLE QUÊTE !** ⚔️\n\n{texte_de_la_quete}"
+    await interaction.response.send_message(message_annonce, ephemeral=False)
 
-@quete.error
-async def quete_error(interaction: discord.Interaction, error):
+@ajouter_quete.error
+async def ajouter_quete_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ Seuls les administrateurs peuvent lancer une quête.", ephemeral=True)
+        await interaction.response.send_message("❌ Seuls les administrateurs peuvent ajouter une quête.", ephemeral=True)
 
 client.run(os.getenv("DISCORD_TOKEN"))
