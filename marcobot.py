@@ -28,6 +28,7 @@ class QuizView(discord.ui.View):
     def __init__(self, correct_index):
         super().__init__(timeout=None)
         self.correct_index = correct_index
+        self.is_active = True  # Le quiz reste actif tant que personne n'a gagné
 
     @discord.ui.button(label="1️⃣ Choix 1", style=discord.ButtonStyle.primary)
     async def btn_1(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -42,11 +43,19 @@ class QuizView(discord.ui.View):
         await self.check_answer(interaction, 2)
 
     async def check_answer(self, interaction: discord.Interaction, chosen_index):
+        # Si le quiz est déjà terminé par un autre joueur
+        if not self.is_active:
+            await interaction.response.send_message("Ce quiz est déjà terminé ! Un autre joueur a trouvé la bonne réponse.", ephemeral=True)
+            return
+
         if chosen_index == self.correct_index:
-            await interaction.response.send_message("Bravo ! C'est la bonne réponse 🎉", ephemeral=True)
+            # Le premier à trouver gagne et verrouille le quiz
+            self.is_active = False
             for child in self.children:
                 child.disabled = True
-            await interaction.message.edit(view=self)
+            
+            await interaction.response.send_message("Bravo ! Tu as trouvé la bonne réponse en premier ! 🎉", ephemeral=True)
+            await interaction.message.edit(content=f"{interaction.message.content}\n\n🏆 **Quiz terminé !** Gagné par {interaction.user.mention} !", view=self)
 
             message_alerte = f"🏆 **Alerte Quiz !** L'utilisateur **{interaction.user}** a réussi à trouver la bonne réponse sur le serveur **{interaction.guild.name}** !"
             tous_les_destinataires = STAFF_IDS + ANIMATEURS_IDS
@@ -59,7 +68,8 @@ class QuizView(discord.ui.View):
                 except Exception as e:
                     print(f"Erreur lors de l'envoi du MP à l'utilisateur {user_id} : {e}")
         else:
-            await interaction.response.send_message("Dommage, ce n'est pas la bonne réponse ❌", ephemeral=True)
+            # Mauvaise réponse : le quiz continue pour les autres
+            await interaction.response.send_message("Dommage, ce n'est pas la bonne réponse ❌ Réessaie !", ephemeral=True)
 
 class MyBot(discord.Client):
     def __init__(self):
