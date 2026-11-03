@@ -90,7 +90,7 @@ async def on_ready():
     print(f"Connecté en tant que {client.user} (ID: {client.user.id})")
 
 # 1. COMMANDE QUIZ (Réservée aux Administrateurs)
-@client.tree.command(name="quiz", description="[Admin] Lance la question du quiz !", guild=GUILD_ID)
+@client.tree.command(name="quiz", description="[Admin] Lance la question lance le quiz !!! !", guild=GUILD_ID)
 @app_commands.checks.has_permissions(administrator=True)
 async def quiz(interaction: discord.Interaction):
     if not QUESTIONS_LIST:
