@@ -1,147 +1,105 @@
-import os
 import discord
+from discord.ext import commands
 from discord import app_commands
+import os
 
-# Ton ID de serveur Discord
-GUILD_ID = discord.Object(id=1359606058922017001)
+intents = discord.Intents.default()
+intents.message_content = True
 
-# Liste stockant les questions créées dynamiquement par les admins
-QUESTIONS_LIST = [
-    {
-        "question": "Quelle est la capitale de la France ?",
-        "options": ["1️⃣ Paris", "2️⃣ Londres", "3️⃣ Berlin"],
-        "correct": 0
-    }
-]
-
-# Liste des ID Discord des membres du Staff
-STAFF_IDS = [
-    1532919042837315654, 
-]
-
-# Liste des ID Discord des Animateurs
-ANIMATEURS_IDS = [
-    1478789840270135406, 1524068660589625404, 1521936013017223408 
-]
-
-class QuizView(discord.ui.View):
-    def __init__(self, correct_index):
-        super().__init__(timeout=None)
-        self.correct_index = correct_index
-        self.is_active = True  # Le quiz reste actif tant que personne n'a gagné
-
-    @discord.ui.button(label="1️⃣ Choix 1", style=discord.ButtonStyle.primary)
-    async def btn_1(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.check_answer(interaction, 0)
-
-    @discord.ui.button(label="2️⃣ Choix 2", style=discord.ButtonStyle.primary)
-    async def btn_2(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.check_answer(interaction, 1)
-
-    @discord.ui.button(label="3️⃣ Choix 3", style=discord.ButtonStyle.primary)
-    async def btn_3(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.check_answer(interaction, 2)
-
-    async def check_answer(self, interaction: discord.Interaction, chosen_index):
-        # Si le quiz est déjà terminé par un autre joueur
-        if not self.is_active:
-            await interaction.response.send_message("Ce quiz est déjà terminé ! Un autre joueur a trouvé la bonne réponse.", ephemeral=True)
-            return
-
-        if chosen_index == self.correct_index:
-            # Le premier à trouver gagne et verrouille le quiz
-            self.is_active = False
-            for child in self.children:
-                child.disabled = True
-            
-            await interaction.response.send_message("Bravo ! Tu as trouvé la bonne réponse en premier ! 🎉", ephemeral=True)
-            await interaction.message.edit(content=f"{interaction.message.content}\n\n🏆 **Quiz terminé !** Gagné par {interaction.user.mention} !", view=self)
-
-            message_alerte = f"🏆 **Alerte Quiz !** L'utilisateur **{interaction.user}** a réussi à trouver la bonne réponse sur le serveur **{interaction.guild.name}** !"
-            tous_les_destinataires = STAFF_IDS + ANIMATEURS_IDS
-
-            for user_id in tous_les_destinataires:
-                try:
-                    user_obj = await interaction.client.fetch_user(user_id)
-                    if user_obj:
-                        await user_obj.send(message_alerte)
-                except Exception as e:
-                    print(f"Erreur lors de l'envoi du MP à l'utilisateur {user_id} : {e}")
-        else:
-            # Mauvaise réponse : le quiz continue pour les autres
-            await interaction.response.send_message("Dommage, ce n'est pas la bonne réponse ❌ Réessaie !", ephemeral=True)
-
-class MyBot(discord.Client):
+class MarcoBot(commands.Bot):
     def __init__(self):
-        super().__init__(intents=discord.Intents.default())
-        self.tree = app_commands.CommandTree(self)
+        super().__init__(command_prefix="!", intents=intents)
+        # Liste temporaire pour stocker les quêtes (tu pourras remplacer par une base de données plus tard)
+        self.quetes_list = [
+            {"titre": "💬 Participer au chat", "description": "Envoyer au moins 10 messages dans les salons textuels.", "recompense": "50 pièces d'or"},
+            {"titre": "🎮 Jouer avec la communauté", "description": "Participer à une session vocale ou un jeu sur le serveur.", "recompense": "100 pièces d'or + Rôle actif"}
+        ]
 
     async def setup_hook(self):
-        # Copie et synchronise les commandes pour qu'elles s'affichent sur le profil et sur le serveur
+        # Synchronisation globale ou par guilde
+        GUILD_ID = discord.Object(id=1359606058922017001)  # Ton ID de serveur
         self.tree.copy_global_to(guild=GUILD_ID)
         await self.tree.sync(guild=GUILD_ID)
-        await self.tree.sync()  # Synchronisation globale pour le profil
-        print(f"Commandes synchronisées pour {self.user}")
+        print("Commandes synchronisées avec succès !")
 
-client = MyBot()
+bot = MarcoBot()
 
-@client.event
+@bot.event
 async def on_ready():
-    print(f"Connecté en tant que {client.user} (ID: {client.user.id})")
+    print(f"Connecté en tant que {bot.user} (ID: {bot.user.id})")
 
-# 1. COMMANDE QUIZ (Réservée aux Administrateurs)
-@client.tree.command(name="quiz", description="[Admin] Lance la question lance le quiz !!! !", guild=GUILD_ID)
+# ==========================================
+# 1. COMMANDE ADMIN : Ajouter une quête
+# ==========================================
+@bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une nouvelle quête journalière.")
+@app_commands.describe(titre="Titre de la quête", description="Description de ce qu'il faut faire", recompense="Récompense à gagner")
 @app_commands.checks.has_permissions(administrator=True)
-async def quiz(interaction: discord.Interaction):
-    if not QUESTIONS_LIST:
-        await interaction.response.send_message("Aucune question disponible pour le moment !", ephemeral=True)
-        return
-
-    q = QUESTIONS_LIST[-1]
-    view = QuizView(correct_index=q["correct"])
-    
-    view.children[0].label = q["options"][0]
-    view.children[1].label = q["options"][1]
-    view.children[2].label = q["options"][2]
-
-    await interaction.response.send_message(f"**Question :** {q['question']}", view=view)
-
-@quiz.error
-async def quiz_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ Seuls les administrateurs peuvent lancer le quiz.", ephemeral=True)
-
-# 2. COMMANDE AJOUTER QUIZ (Réservée aux Administrateurs)
-@client.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz", guild=GUILD_ID)
-@app_commands.checks.has_permissions(administrator=True)
-async def ajouter_quiz(interaction: discord.Interaction, question: str, choix1: str, choix2: str, choix3: str, bonne_reponse_numero: int):
-    if bonne_reponse_numero not in [1, 2, 3]:
-        await interaction.response.send_message("Le numéro de la bonne réponse doit être 1, 2 ou 3 !", ephemeral=True)
-        return
-
-    QUESTIONS_LIST.append({
-        "question": question,
-        "options": [choix1, choix2, choix3],
-        "correct": bonne_reponse_numero - 1
+async def ajouter_quete(interaction: discord.Interaction, titre: str, description: str, recompense: str):
+    bot.quetes_list.append({
+        "titre": titre,
+        "description": description,
+        "recompense": recompense
     })
+    
+    embed = discord.Embed(
+        title="✅ Quête journalière ajoutée !",
+        description=f"La quête **{titre}** a été enregistrée avec succès.",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Détails", value=description, inline=False)
+    embed.add_field(name="Récompense", value=recompense, inline=False)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    await interaction.response.send_message(f"✅ Question ajoutée avec succès !\n**{question}**", ephemeral=True)
+# ==========================================
+# 2. COMMANDE : Afficher les quêtes journalières (Embed)
+# ==========================================
+@bot.tree.command(name="quetes_journalieres", description="Connaître et recevoir des récompenses des quêtes journalières.")
+async def quetes_journalieres(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🌟 Quêtes Journalières",
+        description="Accomplis ces missions pour progresser et recevoir tes récompenses exclusives !",
+        color=discord.Color.gold()
+    )
+    
+    if not bot.quetes_list:
+        embed.add_field(name="Aucune quête", value="Il n'y a pas de quête journalière active pour le moment.", inline=False)
+    else:
+        for index, q in enumerate(bot.quetes_list, start=1):
+            valeur_texte = f"**Objectif :** {q['description']}\n**Récompense :** {q['recompense']}"
+            embed.add_field(name=f"Quête {index} : {q['titre']}", value=valeur_texte, inline=False)
+            
+    embed.set_footer(text="Reviens chaque jour pour de nouvelles quêtes !")
+    await interaction.response.send_message(embed=embed)
 
-@ajouter_quiz.error
-async def ajouter_quiz_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ Seuls les administrateurs peuvent créer de nouvelles questions.", ephemeral=True)
-
-# 3. COMMANDE AJOUTER QUÊTE (Réservée aux Administrateurs)
-@client.tree.command(name="ajouter_quete", description="[Admin] Écris et lance une quête sur le serveur !", guild=GUILD_ID)
+# ==========================================
+# 3. COMMANDE ADMIN : Gérer / Voir l'embed des quêtes
+# ==========================================
+@bot.tree.command(name="gerer_quetes", description="[Admin] Gérer ou afficher le panneau de contrôle des quêtes.")
 @app_commands.checks.has_permissions(administrator=True)
-async def ajouter_quete(interaction: discord.Interaction, texte_de_la_quete: str):
-    message_annonce = f"⚔️ **NOUVELLE QUÊTE !** ⚔️\n\n{texte_de_la_quete}"
-    await interaction.response.send_message(message_annonce, ephemeral=False)
+async def gerer_quetes(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="⚙️ Panneau de Gestion des Quêtes",
+        description=f"Nombre total de quêtes actives : **{len(bot.quetes_list)}**\n\nUtilise `/ajouter_quete` pour en rajouter de nouvelles.",
+        color=discord.Color.blue()
+    )
+    for i, q in enumerate(bot.quetes_list, start=1):
+        embed.add_field(name=f"#{i} - {q['titre']}", value=f"Récompense: {q['recompense']}", inline=True)
+        
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# Gestion des erreurs de permissions
 @ajouter_quete.error
-async def ajouter_quete_error(interaction: discord.Interaction, error):
+@gerer_quetes.error
+async def admin_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ Seuls les administrateurs peuvent ajouter une quête.", ephemeral=True)
+        await interaction.response.send_message("❌ Tu n'as pas les permissions d'administrateur pour utiliser cette commande.", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Une erreur est survenue.", ephemeral=True)
 
-client.run(os.getenv("DISCORD_TOKEN"))
+# Lancement du bot avec le token des variables d'environnement
+TOKEN = os.getenv("DISCORD_TOKEN")
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("Erreur : Le token DISCORD_TOKEN est introuvable dans les variables d'environnement.")
