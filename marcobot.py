@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import os
+import random
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -22,10 +23,12 @@ class MarcoBot(commands.Bot):
                 "recompense": "100 pièces d'or + Rôle actif"
             }
         ]
+        # Quiz avec des choix de boutons (question, options, bonne réponse)
         self.quiz_list = [
             {
                 "question": "Quel est le langage principal utilisé pour coder marcobot ?",
-                "reponse": "python"
+                "options": ["Python", "JavaScript", "C++", "HTML"],
+                "reponse": "Python"
             }
         ]
 
@@ -43,7 +46,7 @@ async def on_ready():
     print(f"Connecté en tant que {bot.user} (ID: {bot.user.id})")
 
 # ==========================================
-# GESTION DES QUÊTES JOURNALIÈRES
+# 1. GESTION DES QUÊTES JOURNALIÈRES
 # ==========================================
 
 @bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une nouvelle quête journalière.")
@@ -99,56 +102,90 @@ async def gerer_quetes(interaction: discord.Interaction):
 
 
 # ==========================================
-# GESTION DES QUIZ
+# 2. GESTION DES QUIZ AVEC BOUTONS INTERACTIFS
 # ==========================================
 
-@bot.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz.")
-@app_commands.describe(question="La question à poser", reponse="La bonne réponse attendue")
+class QuizView(discord.ui.View):
+    def __init__(self, options, bonne_reponse):
+        super().__init__(timeout=30.0)
+        self.bonne_reponse = bonne_reponse
+        self.answered = False
+
+        # Création dynamique des boutons pour chaque option de réponse
+        for option in options:
+            button = discord.ui.Button(label=option, style=discord.ButtonStyle.blurple)
+            button.callback = self.create_callback(option)
+            self.add_item(button)
+
+    def create_callback(self, option_choisie):
+        async def button_callback(interaction: discord.Interaction):
+            if self.answered:
+                await interaction.response.send_message("❌ Quelqu'un a déjà répondu à ce quiz !", ephemeral=True)
+                return
+
+            self.answered = True
+            # Désactiver tous les boutons après la réponse
+            for child in self.children:
+                child.disabled = True
+
+            if option_choisie == self.bonne_reponse:
+                await interaction.response.edit_message(content=f"🎉 Bravo {interaction.user.mention} ! C'était la bonne réponse (**{self.bonne_reponse}**) !", view=self)
+            else:
+                await interaction.response.edit_message(content=f"❌ Dommage {interaction.user.mention}, ce n'était pas la bonne réponse. La bonne réponse était : **{self.bonne_reponse}**.", view=self)
+
+        return button_callback
+
+    async def on_timeout(self):
+        if not self.answered:
+            for child in self.children:
+                child.disabled = True
+            try:
+                # Désactive les boutons si le temps est écoulé
+                pass
+            except Exception:
+                pass
+
+@bot.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz avec choix multiples.")
+@app_commands.describe(question="La question", opt1="Option 1", opt2="Option 2", opt3="Option 3", opt4="Option 4", bonne_reponse="La bonne réponse exacte parmi les options")
 @app_commands.checks.has_permissions(administrator=True)
-async def ajouter_quiz(interaction: discord.Interaction, question: str, reponse: str):
+async def ajouter_quiz(interaction: discord.Interaction, question: str, opt1: str, opt2: str, opt3: str, opt4: str, bonne_reponse: str):
+    options = [opt1, opt2, opt3, opt4]
+    if bonne_reponse not in options:
+        await interaction.response.send_message("❌ La bonne réponse doit correspondre exactement à l'une des 4 options proposées !", ephemeral=True)
+        return
+
     bot.quiz_list.append({
         "question": question,
-        "reponse": reponse.lower().strip()
+        "options": options,
+        "reponse": bonne_reponse
     })
     
     embed = discord.Embed(
-        title="❓ Quiz ajouté avec succès !",
-        description=f"**Question :** {question}\n**Réponse :** {reponse}",
+        title="❓ Quiz à choix multiples ajouté !",
+        description=f"**Question :** {question}\n**Bonne réponse :** {bonne_reponse}",
         color=discord.Color.purple()
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="quiz", description="[Admin/Utilisateur] Lance une question de quiz aléatoire !")
+@bot.tree.command(name="quiz", description="[Utilisateur] Lance une question de quiz interactive avec boutons !")
 async def quiz(interaction: discord.Interaction):
     if not bot.quiz_list:
         await interaction.response.send_message("❌ Il n'y a aucun quiz disponible pour le moment.", ephemeral=True)
         return
 
-    import random
     q_data = random.choice(bot.quiz_list)
 
     embed = discord.Embed(
         title="🧠 C'est l'heure du Quiz !",
-        description=f"**{q_data['question']}**",
-        color=discord.Color.blurple()
+        description=f"**{q_data['question']}**\n\n*Clique sur l'un des boutons ci-dessous pour répondre !*",
+        color=discord.Color.blue()
     )
-    embed.set_footer(text="Réponds directement dans ce salon en écrivant ta réponse !")
-    await interaction.response.send_message(embed=embed)
-
-    def check(m):
-        return m.channel == interaction.channel and not m.author.bot
-
-    try:
-        msg = await bot.wait_for('message', timeout=20.0, check=check)
-        if msg.content.lower().strip() == q_data['reponse']:
-            await msg.reply(f"🎉 Bravo {msg.author.mention} ! C'était la bonne réponse (`{q_data['reponse']}`) !")
-        else:
-            await msg.reply(f"❌ Dommage {msg.author.mention}, ce n'est pas la bonne réponse.")
-    except asyncio.TimeoutError:
-        await interaction.followup.send("⏰ Temps écoulé ! Personne n'a répondu à temps.")
+    
+    view = QuizView(q_data["options"], q_data["reponse"])
+    await interaction.response.send_message(embed=embed, view=view)
 
 
-# Gestion des erreurs de permissions pour les commandes admin
+# Gestion des erreurs de permissions
 @ajouter_quete.error
 @gerer_quetes.error
 @ajouter_quiz.error
