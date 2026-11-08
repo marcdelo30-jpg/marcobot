@@ -23,7 +23,6 @@ class MarcoBot(commands.Bot):
                 "recompense": "100 pièces d'or + Rôle actif"
             }
         ]
-        # Quiz avec des choix de boutons (question, options, bonne réponse)
         self.quiz_list = [
             {
                 "question": "Quel est le langage principal utilisé pour coder marcobot ?",
@@ -69,6 +68,22 @@ async def ajouter_quete(interaction: discord.Interaction, titre: str, descriptio
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+@bot.tree.command(name="supprimer_quete", description="[Admin] Supprimer une quête journalière via son numéro.")
+@app_commands.describe(numero="Le numéro de la quête (visible dans /gerer_quetes)")
+@app_commands.checks.has_permissions(administrator=True)
+async def supprimer_quete(interaction: discord.Interaction, numero: int):
+    index = numero - 1
+    if 0 <= index < len(bot.quetes_list):
+        quete_supprimee = bot.quetes_list.pop(index)
+        embed = discord.Embed(
+            title="🗑️ Quête supprimée",
+            description=f"La quête **{quete_supprimee['titre']}** a été retirée avec succès.",
+            color=discord.Color.red()
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Numéro de quête invalide. Utilise `/gerer_quetes` pour voir les bons numéros.", ephemeral=True)
+
 @bot.tree.command(name="quetes_journalieres", description="Connaître et recevoir des récompenses des quêtes journalières.")
 async def quetes_journalieres(interaction: discord.Interaction):
     embed = discord.Embed(
@@ -82,7 +97,7 @@ async def quetes_journalieres(interaction: discord.Interaction):
     else:
         for index, q in enumerate(bot.quetes_list, start=1):
             valeur_texte = f"**Objectif :** {q['description']}\n**Récompense :** {q['recompense']}"
-            embed.add_field(name=f"Quête {index} : {q['titre']}", value=valeur_texte, inline=False)
+            embed.add_field(name=f"Quête #{index} : {q['titre']}", value=valeur_texte, inline=False)
             
     embed.set_footer(text="Reviens chaque jour pour de nouvelles quêtes !")
     await interaction.response.send_message(embed=embed)
@@ -92,7 +107,7 @@ async def quetes_journalieres(interaction: discord.Interaction):
 async def gerer_quetes(interaction: discord.Interaction):
     embed = discord.Embed(
         title="⚙️ Panneau de Gestion des Quêtes",
-        description=f"Nombre total de quêtes actives : **{len(bot.quetes_list)}**\n\nUtilise `/ajouter_quete` pour en rajouter de nouvelles.",
+        description=f"Nombre total de quêtes actives : **{len(bot.quetes_list)}**\n\nUtilise `/ajouter_quete` pour en ajouter ou `/supprimer_quete` pour en retirer.",
         color=discord.Color.blue()
     )
     for i, q in enumerate(bot.quetes_list, start=1):
@@ -111,7 +126,6 @@ class QuizView(discord.ui.View):
         self.bonne_reponse = bonne_reponse
         self.answered = False
 
-        # Création dynamique des boutons pour chaque option de réponse
         for option in options:
             button = discord.ui.Button(label=option, style=discord.ButtonStyle.blurple)
             button.callback = self.create_callback(option)
@@ -124,7 +138,6 @@ class QuizView(discord.ui.View):
                 return
 
             self.answered = True
-            # Désactiver tous les boutons après la réponse
             for child in self.children:
                 child.disabled = True
 
@@ -134,16 +147,6 @@ class QuizView(discord.ui.View):
                 await interaction.response.edit_message(content=f"❌ Dommage {interaction.user.mention}, ce n'était pas la bonne réponse. La bonne réponse était : **{self.bonne_reponse}**.", view=self)
 
         return button_callback
-
-    async def on_timeout(self):
-        if not self.answered:
-            for child in self.children:
-                child.disabled = True
-            try:
-                # Désactive les boutons si le temps est écoulé
-                pass
-            except Exception:
-                pass
 
 @bot.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz avec choix multiples.")
 @app_commands.describe(question="La question", opt1="Option 1", opt2="Option 2", opt3="Option 3", opt4="Option 4", bonne_reponse="La bonne réponse exacte parmi les options")
@@ -187,6 +190,7 @@ async def quiz(interaction: discord.Interaction):
 
 # Gestion des erreurs de permissions
 @ajouter_quete.error
+@supprimer_quete.error
 @gerer_quetes.error
 @ajouter_quiz.error
 async def admin_error(interaction: discord.Interaction, error):
