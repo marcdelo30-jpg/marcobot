@@ -6,7 +6,7 @@ import random
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  # Nécessaire pour récupérer les rôles et les membres du serveur
+intents.members = True  # Nécessaire pour envoyer des messages aux membres
 
 class MarcoBot(commands.Bot):
     def __init__(self):
@@ -118,15 +118,15 @@ async def gerer_quetes(interaction: discord.Interaction):
 
 
 # ==========================================
-# 2. GESTION DES QUIZ AVEC NOTIFICATION ADMIN EN MP
+# 2. GESTION DES QUIZ (AVEC BOUTONS INTacts POUR LES FAUSSES RÉPONSES)
 # ==========================================
 
 class QuizView(discord.ui.View):
     def __init__(self, options, bonne_reponse, question):
-        super().__init__(timeout=30.0)
+        super().__init__(timeout=60.0)
         self.bonne_reponse = bonne_reponse
         self.question = question
-        self.answered = False
+        self.quiz_fini = False
 
         for option in options:
             button = discord.ui.Button(label=option, style=discord.ButtonStyle.blurple)
@@ -135,38 +135,52 @@ class QuizView(discord.ui.View):
 
     def create_callback(self, option_choisie):
         async def button_callback(interaction: discord.Interaction):
-            if self.answered:
-                await interaction.response.send_message("❌ Quelqu'un a déjà répondu à ce quiz !", ephemeral=True)
+            if self.quiz_fini:
+                await interaction.response.send_message("❌ Ce quiz est déjà terminé !", ephemeral=True)
                 return
 
-            self.answered = True
-            for child in self.children:
-                child.disabled = True
-
+            # Si la réponse est correcte : le quiz se termine et les boutons se désactivent
             if option_choisie == self.bonne_reponse:
+                self.quiz_fini = True
+                for child in self.children:
+                    child.disabled = True
+                
                 await interaction.response.edit_message(content=f"🎉 Bravo {interaction.user.mention} ! C'était la bonne réponse (**{self.bonne_reponse}**) !", view=self)
                 
-                # Envoi d'un message privé à tous les administrateurs du serveur
+                # Notifier les admins en MP
                 guild = interaction.guild
                 if guild:
                     for member in guild.members:
-                        # Vérifie si le membre est administrateur (et n'est pas un bot)
                         if member.guild_permissions.administrator and not member.bot:
                             try:
                                 admin_embed = discord.Embed(
                                     title="🔔 Bonne réponse à un Quiz !",
-                                    description=f"Un membre a trouvé la bonne réponse sur le serveur **{guild.name}**.",
+                                    description=f"Un membre a trouvé la bonne réponse sur **{guild.name}**.",
                                     color=discord.Color.gold()
                                 )
-                                admin_embed.add_field(name="Membre", value=f"{member.mention} ({interaction.user.name})", inline=False)
+                                admin_embed.add_field(name="Membre", value=f"{interaction.user.mention} ({interaction.user.name})", inline=False)
                                 admin_embed.add_field(name="Question", value=self.question, inline=False)
                                 admin_embed.add_field(name="Bonne réponse", value=self.bonne_reponse, inline=False)
                                 await member.send(embed=admin_embed)
                             except discord.HTTPException:
-                                # Ignore si les MP sont fermés pour cet admin
                                 pass
+            
+            # Si la réponse est fausse : le quiz reste intact pour les autres, et on envoie un MP au perdant
             else:
-                await interaction.response.edit_message(content=f"❌ Dommage {interaction.user.mention}, ce n'était pas la bonne réponse. La bonne réponse était : **{self.bonne_reponse}**.", view=self)
+                await interaction.response.send_message(f"❌ Mauvaise réponse ! Vérifie tes messages privés.", ephemeral=True)
+                
+                try:
+                    perdu_embed = discord.Embed(
+                        title="❌ Raté pour le Quiz !",
+                        description=f"Tu as donné une mauvaise réponse à la question sur le serveur **{interaction.guild.name}**.",
+                        color=discord.Color.red()
+                    )
+                    perdu_embed.add_field(name="Question", value=self.question, inline=False)
+                    perdu_embed.add_field(name="Ton choix", value=option_choisie, inline=False)
+                    perdu_embed.set_footer(text="Le quiz est toujours actif dans le salon, tu peux retenter ta chance ou attendre une autre question !")
+                    await interaction.user.send(embed=perdu_embed)
+                except discord.HTTPException:
+                    pass
 
         return button_callback
 
