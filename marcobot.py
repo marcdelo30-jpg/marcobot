@@ -6,6 +6,7 @@ import random
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True  # Nécessaire pour récupérer les rôles et les membres du serveur
 
 class MarcoBot(commands.Bot):
     def __init__(self):
@@ -117,13 +118,14 @@ async def gerer_quetes(interaction: discord.Interaction):
 
 
 # ==========================================
-# 2. GESTION DES QUIZ AVEC BOUTONS INTERACTIFS
+# 2. GESTION DES QUIZ AVEC NOTIFICATION ADMIN EN MP
 # ==========================================
 
 class QuizView(discord.ui.View):
-    def __init__(self, options, bonne_reponse):
+    def __init__(self, options, bonne_reponse, question):
         super().__init__(timeout=30.0)
         self.bonne_reponse = bonne_reponse
+        self.question = question
         self.answered = False
 
         for option in options:
@@ -143,6 +145,26 @@ class QuizView(discord.ui.View):
 
             if option_choisie == self.bonne_reponse:
                 await interaction.response.edit_message(content=f"🎉 Bravo {interaction.user.mention} ! C'était la bonne réponse (**{self.bonne_reponse}**) !", view=self)
+                
+                # Envoi d'un message privé à tous les administrateurs du serveur
+                guild = interaction.guild
+                if guild:
+                    for member in guild.members:
+                        # Vérifie si le membre est administrateur (et n'est pas un bot)
+                        if member.guild_permissions.administrator and not member.bot:
+                            try:
+                                admin_embed = discord.Embed(
+                                    title="🔔 Bonne réponse à un Quiz !",
+                                    description=f"Un membre a trouvé la bonne réponse sur le serveur **{guild.name}**.",
+                                    color=discord.Color.gold()
+                                )
+                                admin_embed.add_field(name="Membre", value=f"{member.mention} ({interaction.user.name})", inline=False)
+                                admin_embed.add_field(name="Question", value=self.question, inline=False)
+                                admin_embed.add_field(name="Bonne réponse", value=self.bonne_reponse, inline=False)
+                                await member.send(embed=admin_embed)
+                            except discord.HTTPException:
+                                # Ignore si les MP sont fermés pour cet admin
+                                pass
             else:
                 await interaction.response.edit_message(content=f"❌ Dommage {interaction.user.mention}, ce n'était pas la bonne réponse. La bonne réponse était : **{self.bonne_reponse}**.", view=self)
 
@@ -184,7 +206,7 @@ async def quiz(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
     
-    view = QuizView(q_data["options"], q_data["reponse"])
+    view = QuizView(q_data["options"], q_data["reponse"], q_data["question"])
     await interaction.response.send_message(embed=embed, view=view)
 
 
