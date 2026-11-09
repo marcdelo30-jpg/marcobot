@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import os
 import random
+from datetime import datetime, timedelta
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -44,8 +45,11 @@ class MarcoBot(commands.Bot):
             {"nom": "Arcanin", "rarete": "Rare", "description": "Un Pokémon chien majestueux et très rapide."}
         ]
 
-        # 4. Inventaires personnels des utilisateurs (Dictionnaire : user_id -> liste de cartes)
+        # 4. Inventaires personnels (user_id -> liste de cartes)
         self.user_inventories = {}
+
+        # 5. Suivi du temps de dernier tirage (user_id -> datetime du dernier /tirer_carte)
+        self.dernier_tirage = {}
 
     async def setup_hook(self):
         GUILD_ID = discord.Object(id=1359606058922017001)  # Ton ID de serveur
@@ -235,7 +239,7 @@ async def quiz(interaction: discord.Interaction):
 
 
 # ==========================================
-# 3. GESTION DES CARTES, TIRAGE (AVEC DOUBLE DROP FAIBLE) & ÉCHANGES
+# 3. GESTION DES CARTES, TIRAGE JOURNALIER & ÉCHANGES
 # ==========================================
 
 @bot.tree.command(name="ajouter_carte", description="[Admin] Ajouter une carte Pokémon avec sa rareté.")
@@ -289,38 +293,57 @@ async def voir_cartes(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="tirer_carte", description="Tirer une carte aléatoire (avec une chance infime d'en obtenir deux) !")
+@bot.tree.command(name="tirer_carte", description="Tirer ta carte Pokémon quotidienne (1 fois toutes les 24h) !")
 async def tirer_carte(interaction: discord.Interaction):
     if not bot.cartes_list:
         await interaction.response.send_message("❌ Aucune carte disponible pour le tirage.", ephemeral=True)
         return
 
     user_id = interaction.user.id
+    maintenant = datetime.now()
+
+    # Vérification du délai de 24h
+    if user_id in bot.dernier_tirage:
+        dernier_temps = bot.dernier_tirage[user_id]
+        prochain_tirage = dernier_temps + timedelta(hours=24)
+        
+        if maintenant < prochain_tirage:
+            # Calcul du temps restant
+            temps_restant = prochain_tirage - maintenant
+            heures = int(temps_restant.total_seconds() // 3600)
+            minutes = int((temps_restant.total_seconds() % 3600) // 60)
+            
+            await interaction.response.send_message(
+                f"⏳ Tu as déjà tiré ta carte aujourd'hui !\nTu pourras refaire un tirage dans **{heures}h et {minutes}min**.", 
+                ephemeral=True
+            )
+            return
+
+    # Mise à jour du moment du tirage
+    bot.dernier_tirage[user_id] = maintenant
+
     if user_id not in bot.user_inventories:
         bot.user_inventories[user_id] = []
 
-    # FAIBLE PROBABILITÉ DE DOUBLON (ex: 10% de chance d'obtenir 2 cartes au lieu d'1)
-    # Tu peux baisser à 0.05 pour 5% ou 0.01 pour 1%
+    # 10 % de chance d'obtenir 2 cartes au lieu d'1
     obtient_deux_cartes = random.random() < 0.10  
 
     if obtient_deux_cartes and len(bot.cartes_list) >= 2:
-        cartes_tirees = random.sample(bot.cartes_list, 2) # Pioche 2 cartes différentes
+        cartes_tirees = random.sample(bot.cartes_list, 2)
     else:
         cartes_tirees = [random.choice(bot.cartes_list)]
 
-    # Ajout des cartes dans l'inventaire de l'utilisateur
     for carte in cartes_tirees:
         bot.user_inventories[user_id].append(carte)
 
-    # Création de l'affichage de l'embed
     if len(cartes_tirees) == 2:
-        titre_embed = f"✨ DOUBLE CHANCE ! 2 cartes pour {interaction.user.name} !"
-        desc_embed = f"Coup de bol incroyable ! Tu as obtenu deux cartes d'un coup :\n• **{cartes_tirees[0]['nom']}** (*{cartes_tirees[0]['rarete']}*)\n• **{cartes_tirees[1]['nom']}** (*{cartes_tirees[1]['rarete']}*)"
+        titre_embed = f"✨ DOUBLE CHANCE QUOTIDIENNE !"
+        desc_embed = f"Coup de bol incroyable pour ton tirage du jour ! Tu as obtenu deux cartes :\n• **{cartes_tirees[0]['nom']}** (*{cartes_tirees[0]['rarete']}*)\n• **{cartes_tirees[1]['nom']}** (*{cartes_tirees[1]['rarete']}*)"
         couleur = discord.Color.gold()
     else:
         carte = cartes_tirees[0]
-        titre_embed = f"🎴 Tirage de Carte pour {interaction.user.name}"
-        desc_embed = f"Tu as tiré et gagné la carte **{carte['nom']}** !"
+        titre_embed = f"🎴 Tirage Quotidien de {interaction.user.name}"
+        desc_embed = f"Voici ta carte du jour : **{carte['nom']}** !"
         
         couleurs = {
             "Légendaire": discord.Color.gold(),
@@ -339,7 +362,7 @@ async def tirer_carte(interaction: discord.Interaction):
         embed.add_field(name="Rareté", value=cartes_tirees[0]["rarete"], inline=True)
         embed.add_field(name="Description", value=cartes_tirees[0]["description"], inline=False)
     
-    embed.set_footer(text="Utilise /inventaire pour voir tes cartes possédées.")
+    embed.set_footer(text="Reviens dans 24 heures pour un nouveau tirage !")
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="inventaire", description="Afficher ton inventaire personnel de cartes Pokémon.")
