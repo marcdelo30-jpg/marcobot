@@ -6,12 +6,13 @@ import random
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  # Nécessaire pour envoyer des messages aux membres
+intents.members = True  # Nécessaire pour les MP et la gestion des membres
 
 class MarcoBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
-        # Listes pour stocker les quêtes et les quiz
+        
+        # 1. Quêtes journalières
         self.quetes_list = [
             {
                 "titre": "💬 Participer au chat", 
@@ -24,6 +25,8 @@ class MarcoBot(commands.Bot):
                 "recompense": "100 pièces d'or + Rôle actif"
             }
         ]
+        
+        # 2. Quiz
         self.quiz_list = [
             {
                 "question": "Quel est le langage principal utilisé pour coder marcobot ?",
@@ -32,8 +35,19 @@ class MarcoBot(commands.Bot):
             }
         ]
 
+        # 3. Base de données globale des cartes du serveur
+        self.cartes_list = [
+            {"nom": "Pikachu", "rarete": "Commun", "description": "Une souris électrique pleine d'énergie."},
+            {"nom": "Bulbizarre", "rarete": "Commun", "description": "Il a une graine plantée sur son dos."},
+            {"nom": "Dracaufeu", "rarete": "Légendaire", "description": "Un dragon de feu surpuissant et redouté."},
+            {"nom": "Mewtwo", "rarete": "Épique", "description": "Un Pokémon créé par manipulation génétique."},
+            {"nom": "Arcanin", "rarete": "Rare", "description": "Un Pokémon chien majestueux et très rapide."}
+        ]
+
+        # 4. Inventaires personnels des utilisateurs (Dictionnaire : user_id -> liste de cartes)
+        self.user_inventories = {}
+
     async def setup_hook(self):
-        # Synchronisation des commandes sur ton serveur
         GUILD_ID = discord.Object(id=1359606058922017001)  # Ton ID de serveur
         self.tree.copy_global_to(guild=GUILD_ID)
         await self.tree.sync(guild=GUILD_ID)
@@ -44,6 +58,7 @@ bot = MarcoBot()
 @bot.event
 async def on_ready():
     print(f"Connecté en tant que {bot.user} (ID: {bot.user.id})")
+
 
 # ==========================================
 # 1. GESTION DES QUÊTES JOURNALIÈRES
@@ -118,7 +133,7 @@ async def gerer_quetes(interaction: discord.Interaction):
 
 
 # ==========================================
-# 2. GESTION DES QUIZ (AVEC BOUTONS INTacts POUR LES FAUSSES RÉPONSES)
+# 2. GESTION DES QUIZ
 # ==========================================
 
 class QuizView(discord.ui.View):
@@ -139,7 +154,6 @@ class QuizView(discord.ui.View):
                 await interaction.response.send_message("❌ Ce quiz est déjà terminé !", ephemeral=True)
                 return
 
-            # Si la réponse est correcte : le quiz se termine et les boutons se désactivent
             if option_choisie == self.bonne_reponse:
                 self.quiz_fini = True
                 for child in self.children:
@@ -147,7 +161,6 @@ class QuizView(discord.ui.View):
                 
                 await interaction.response.edit_message(content=f"🎉 Bravo {interaction.user.mention} ! C'était la bonne réponse (**{self.bonne_reponse}**) !", view=self)
                 
-                # Notifier les admins en MP
                 guild = interaction.guild
                 if guild:
                     for member in guild.members:
@@ -164,11 +177,8 @@ class QuizView(discord.ui.View):
                                 await member.send(embed=admin_embed)
                             except discord.HTTPException:
                                 pass
-            
-            # Si la réponse est fausse : le quiz reste intact pour les autres, et on envoie un MP au perdant
             else:
                 await interaction.response.send_message(f"❌ Mauvaise réponse ! Vérifie tes messages privés.", ephemeral=True)
-                
                 try:
                     perdu_embed = discord.Embed(
                         title="❌ Raté pour le Quiz !",
@@ -177,20 +187,20 @@ class QuizView(discord.ui.View):
                     )
                     perdu_embed.add_field(name="Question", value=self.question, inline=False)
                     perdu_embed.add_field(name="Ton choix", value=option_choisie, inline=False)
-                    perdu_embed.set_footer(text="Le quiz est toujours actif dans le salon, tu peux retenter ta chance ou attendre une autre question !")
+                    perdu_embed.set_footer(text="Le quiz est toujours actif dans le salon, tu peux retenter ta chance !")
                     await interaction.user.send(embed=perdu_embed)
                 except discord.HTTPException:
                     pass
 
         return button_callback
 
-@bot.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz avec choix multiples.")
-@app_commands.describe(question="La question", opt1="Option 1", opt2="Option 2", opt3="Option 3", opt4="Option 4", bonne_reponse="La bonne réponse exacte parmi les options")
+@bot.tree.command(name="ajouter_quiz", description="[Admin] Crée une nouvelle question de quiz.")
+@app_commands.describe(question="La question", opt1="Option 1", opt2="Option 2", opt3="Option 3", opt4="Option 4", bonne_reponse="La bonne réponse exacte")
 @app_commands.checks.has_permissions(administrator=True)
 async def ajouter_quiz(interaction: discord.Interaction, question: str, opt1: str, opt2: str, opt3: str, opt4: str, bonne_reponse: str):
     options = [opt1, opt2, opt3, opt4]
     if bonne_reponse not in options:
-        await interaction.response.send_message("❌ La bonne réponse doit correspondre exactement à l'une des 4 options proposées !", ephemeral=True)
+        await interaction.response.send_message("❌ La bonne réponse doit correspondre exactement à l'une des 4 options !", ephemeral=True)
         return
 
     bot.quiz_list.append({
@@ -206,7 +216,7 @@ async def ajouter_quiz(interaction: discord.Interaction, question: str, opt1: st
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="quiz", description="[Utilisateur] Lance une question de quiz interactive avec boutons !")
+@bot.tree.command(name="quiz", description="[Utilisateur] Lance une question de quiz interactive !")
 async def quiz(interaction: discord.Interaction):
     if not bot.quiz_list:
         await interaction.response.send_message("❌ Il n'y a aucun quiz disponible pour le moment.", ephemeral=True)
@@ -224,11 +234,248 @@ async def quiz(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, view=view)
 
 
-# Gestion des erreurs de permissions
+# ==========================================
+# 3. GESTION DES CARTES & SYSTÈME D'ÉCHANGE
+# ==========================================
+
+@bot.tree.command(name="ajouter_carte", description="[Admin] Ajouter une carte Pokémon avec sa rareté.")
+@app_commands.describe(nom="Nom du Pokémon", rarete="Commun, Rare, Épique ou Légendaire", description="Courte description")
+@app_commands.checks.has_permissions(administrator=True)
+async def ajouter_carte(interaction: discord.Interaction, nom: str, rarete: str, description: str):
+    rarete_clean = rarete.capitalize()
+    raretés_valides = ["Commun", "Rare", "Épique", "Légendaire"]
+    
+    if rarete_clean not in raretés_valides:
+        await interaction.response.send_message("❌ Rareté invalide ! Choisis parmi : Commun, Rare, Épique, Légendaire.", ephemeral=True)
+        return
+
+    bot.cartes_list.append({
+        "nom": nom,
+        "rarete": rarete_clean,
+        "description": description
+    })
+
+    embed = discord.Embed(
+        title="🃏 Nouvelle carte Pokémon ajoutée !",
+        description=f"La carte **{nom}** a été enregistrée dans la base du serveur.",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Rareté", value=rarete_clean, inline=True)
+    embed.add_field(name="Description", value=description, inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="voir_cartes", description="Afficher toutes les cartes Pokémon disponibles sur le serveur.")
+async def voir_cartes(interaction: discord.Interaction):
+    if not bot.cartes_list:
+        await interaction.response.send_message("❌ Aucune carte Pokémon enregistrée pour le moment.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="📦 Catalogue des Cartes du Serveur",
+        description="Voici toutes les cartes existantes, classées par rareté :",
+        color=discord.Color.gold()
+    )
+
+    raretés_ordre = ["Légendaire", "Épique", "Rare", "Commun"]
+    for rarete in raretés_ordre:
+        cartes_filtrees = [c for c in bot.cartes_list if c["rarete"] == rarete]
+        if cartes_filtrees:
+            texte_cartes = ""
+            for c in cartes_filtrees:
+                texte_cartes += f"• **{c['nom']}** : *{c['description']}*\n"
+            
+            emoji = "🌟" if rarete == "Légendaire" else "🔥" if rarete == "Épique" else "✨" if rarete == "Rare" else "⚪"
+            embed.add_field(name=f"{emoji} Rareté : {rarete}", value=texte_cartes, inline=False)
+
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="tirer_carte", description="Tirer une carte aléatoire et l'ajouter à ton inventaire personnel !")
+async def tirer_carte(interaction: discord.Interaction):
+    if not bot.cartes_list:
+        await interaction.response.send_message("❌ Aucune carte disponible pour le tirage.", ephemeral=True)
+        return
+
+    carte = random.choice(bot.cartes_list)
+    user_id = interaction.user.id
+
+    # Ajout de la carte dans l'inventaire personnel de l'utilisateur
+    if user_id not in bot.user_inventories:
+        bot.user_inventories[user_id] = []
+    bot.user_inventories[user_id].append(carte)
+
+    couleurs = {
+        "Légendaire": discord.Color.gold(),
+        "Épique": discord.Color.purple(),
+        "Rare": discord.Color.blue(),
+        "Commun": discord.Color.light_grey()
+    }
+    couleur = couleurs.get(carte["rarete"], discord.Color.default())
+
+    embed = discord.Embed(
+        title=f"🎴 Tirage de Carte pour {interaction.user.name}",
+        description=f"Tu as tiré et gagné la carte **{carte['nom']}** !",
+        color=couleur
+    )
+    embed.add_field(name="Rareté", value=carte["rarete"], inline=True)
+    embed.add_field(name="Description", value=carte["description"], inline=False)
+    embed.set_footer(text="Utilise /inventaire pour voir tes cartes possédées.")
+
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="inventaire", description="Afficher ton inventaire personnel de cartes Pokémon.")
+async def inventaire(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    user_inv = bot.user_inventories.get(user_id, [])
+
+    if not user_inv:
+        await interaction.response.send_message("❌ Ton inventaire est vide ! Utilise `/tirer_carte` pour en obtenir.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title=f"🎒 Inventaire de {interaction.user.name}",
+        description="Voici les cartes Pokémon que tu possèdes :",
+        color=discord.Color.blurple()
+    )
+
+    for idx, c in enumerate(user_inv, start=1):
+        embed.add_field(name=f"#{idx} - {c['nom']} ({c['rarete']})", value=c['description'], inline=False)
+
+    embed.set_footer(text="Utilise /echanger pour proposer un échange à un autre membre !")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# --- Système d'échange interactif avec boutons ---
+class TradeView(discord.ui.View):
+    def __init__(self, bot_instance, emetteur, receveur, carte_offerte, carte_demandee, idx_offert):
+        super().__init__(timeout=60.0)
+        self.bot_instance = bot_instance
+        self.emetteur = emetteur
+        self.receveur = receveur
+        self.carte_offerte = carte_offerte
+        self.carte_demandee = carte_demandee
+        self.idx_offert = idx_offert
+        self.traite = False
+
+    @discord.ui.button(label="Accepter l'échange", style=discord.ButtonStyle.green)
+    async def accepter(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.receveur.id:
+            await interaction.response.send_message("❌ Cet échange ne t'est pas destiné !", ephemeral=True)
+            return
+
+        if self.traite:
+            await interaction.response.send_message("❌ Cet échange a déjà été traité.", ephemeral=True)
+            return
+
+        self.traite = True
+
+        # Vérifier que le receveur possède bien la carte qu'il donne
+        receveur_inv = self.bot_instance.user_inventories.get(self.receveur.id, [])
+        carte_trouvee = None
+        idx_demande = -1
+        for i, c in enumerate(receveur_inv):
+            if c['nom'].lower() == self.carte_demandee.lower():
+                carte_trouvee = c
+                idx_demande = i
+                break
+
+        if not carte_trouvee:
+            await interaction.response.edit_message(content=f"❌ Échange annulé : {self.receveur.mention} ne possède plus la carte **{self.carte_demandee}** dans son inventaire.", view=None)
+            return
+
+        # Vérifier que l'émetteur possède toujours sa carte
+        emetteur_inv = self.bot_instance.user_inventories.get(self.emetteur.id, [])
+        if self.idx_offert >= len(emetteur_inv) or emetteur_inv[self.idx_offert]['nom'] != self.carte_offerte['nom']:
+            await interaction.response.edit_message(content=f"❌ Échange annulé : {self.emetteur.mention} ne possède plus cette carte.", view=None)
+            return
+
+        # Effectuer le transfert des cartes
+        # 1. Retirer et donner chez l'émetteur
+        c_offerte = emetteur_inv.pop(self.idx_offert)
+        emetteur_inv.append(carte_trouvee)
+
+        # 2. Retirer et donner chez le receveur
+        receveur_inv.pop(idx_demande)
+        receveur_inv.append(c_offerte)
+
+        for child in self.children:
+            child.disabled = True
+
+        embed = discord.Embed(
+            title="🤝 Échange réussi !",
+            description=f"L'échange entre **{self.emetteur.name}** et **{self.receveur.name}** a été effectué avec succès.",
+            color=discord.Color.green()
+        )
+        embed.add_field(name=f"Carte reçue par {self.emetteur.name}", value=f"**{carte_trouvee['nom']}**", inline=True)
+        embed.add_field(name=f"Carte reçue par {self.receveur.name}", value=f"**{c_offerte['nom']}**", inline=True)
+
+        await interaction.response.edit_message(content="", embed=embed, view=self)
+
+    @discord.ui.button(label="Refuser", style=discord.ButtonStyle.red)
+    async def refuser(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.receveur.id:
+            await interaction.response.send_message("❌ Cet échange ne t'est pas destiné !", ephemeral=True)
+            return
+
+        if self.traite:
+            await interaction.response.send_message("❌ Cet échange a déjà été traité.", ephemeral=True)
+            return
+
+        self.traite = True
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.response.edit_message(content=f"❌ {self.receveur.mention} a refusé l'échange.", embed=None, view=self)
+
+@bot.tree.command(name="echanger", description="Proposer d'échanger une carte de ton inventaire contre une carte d'un autre membre.")
+@app_commands.describe(membre="Le membre avec qui échanger", numero_carte="Le numéro de ta carte dans /inventaire", nom_carte_voulue="Le nom exact de la carte que tu veux")
+async def echanger(interaction: discord.Interaction, membre: discord.Member, numero_carte: int, nom_carte_voulue: str):
+    if membre.id == interaction.user.id:
+        await interaction.response.send_message("❌ Tu ne peux pas faire d'échange avec toi-même !", ephemeral=True)
+        return
+
+    if membre.bot:
+        await interaction.response.send_message("❌ Tu ne peux pas échanger avec un bot !", ephemeral=True)
+        return
+
+    user_id = interaction.user.id
+    emetteur_inv = bot.user_inventories.get(user_id, [])
+    idx = numero_carte - 1
+
+    # Vérifier que la carte proposée existe dans l'inventaire de l'émetteur
+    if not (0 <= idx < len(emetteur_inv)):
+        await interaction.response.send_message("❌ Numéro de carte invalide dans ton inventaire. Utilise `/inventaire` pour vérifier tes numéros.", ephemeral=True)
+        return
+
+    carte_offerte = emetteur_inv[idx]
+
+    # Vérifier que le destinataire possède bien la carte demandée
+    destinataire_inv = bot.user_inventories.get(membre.id, [])
+    possede_carte = any(c['nom'].lower() == nom_carte_voulue.lower() for c in destinataire_inv)
+
+    if not possede_carte:
+        await interaction.response.send_message(f"❌ {membre.mention} ne possède pas la carte **{nom_carte_voulue}** dans son inventaire.", ephemeral=True)
+        return
+
+    # Envoyer la proposition d'échange au destinataire avec des boutons
+    embed = discord.Embed(
+        title="🤝 Proposition d'échange de cartes",
+        description=f"{interaction.user.mention} souhaite faire un échange avec toi !",
+        color=discord.Color.gold()
+    )
+    embed.add_field(name=f"Il te propose :", value=f"**{carte_offerte['nom']}** (*{carte_offerte['rarete']}*)", inline=False)
+    embed.add_field(name=f"Il veut en échange ta carte :", value=f"**{nom_carte_voulue}**", inline=False)
+    embed.set_footer(text="Clique sur un bouton ci-dessous pour accepter ou refuser.")
+
+    view = TradeView(bot, interaction.user, membre, carte_offerte, nom_carte_voulue, idx)
+    await interaction.response.send_message(content=f"{membre.mention}, tu as une proposition d'échange !", embed=embed, view=view)
+
+
+# Gestion des erreurs de permissions admin
 @ajouter_quete.error
 @supprimer_quete.error
 @gerer_quetes.error
 @ajouter_quiz.error
+@ajouter_carte.error
 async def admin_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ Tu n'as pas les permissions d'administrateur pour utiliser cette commande.", ephemeral=True)
