@@ -235,7 +235,7 @@ async def quiz(interaction: discord.Interaction):
 
 
 # ==========================================
-# 3. GESTION DES CARTES & SYSTÈME D'ÉCHANGE
+# 3. GESTION DES CARTES, TIRAGE (AVEC DOUBLE DROP FAIBLE) & ÉCHANGES
 # ==========================================
 
 @bot.tree.command(name="ajouter_carte", description="[Admin] Ajouter une carte Pokémon avec sa rareté.")
@@ -289,37 +289,57 @@ async def voir_cartes(interaction: discord.Interaction):
 
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="tirer_carte", description="Tirer une carte aléatoire et l'ajouter à ton inventaire personnel !")
+@bot.tree.command(name="tirer_carte", description="Tirer une carte aléatoire (avec une chance infime d'en obtenir deux) !")
 async def tirer_carte(interaction: discord.Interaction):
     if not bot.cartes_list:
         await interaction.response.send_message("❌ Aucune carte disponible pour le tirage.", ephemeral=True)
         return
 
-    carte = random.choice(bot.cartes_list)
     user_id = interaction.user.id
-
-    # Ajout de la carte dans l'inventaire personnel de l'utilisateur
     if user_id not in bot.user_inventories:
         bot.user_inventories[user_id] = []
-    bot.user_inventories[user_id].append(carte)
 
-    couleurs = {
-        "Légendaire": discord.Color.gold(),
-        "Épique": discord.Color.purple(),
-        "Rare": discord.Color.blue(),
-        "Commun": discord.Color.light_grey()
-    }
-    couleur = couleurs.get(carte["rarete"], discord.Color.default())
+    # FAIBLE PROBABILITÉ DE DOUBLON (ex: 10% de chance d'obtenir 2 cartes au lieu d'1)
+    # Tu peux baisser à 0.05 pour 5% ou 0.01 pour 1%
+    obtient_deux_cartes = random.random() < 0.10  
+
+    if obtient_deux_cartes and len(bot.cartes_list) >= 2:
+        cartes_tirees = random.sample(bot.cartes_list, 2) # Pioche 2 cartes différentes
+    else:
+        cartes_tirees = [random.choice(bot.cartes_list)]
+
+    # Ajout des cartes dans l'inventaire de l'utilisateur
+    for carte in cartes_tirees:
+        bot.user_inventories[user_id].append(carte)
+
+    # Création de l'affichage de l'embed
+    if len(cartes_tirees) == 2:
+        titre_embed = f"✨ DOUBLE CHANCE ! 2 cartes pour {interaction.user.name} !"
+        desc_embed = f"Coup de bol incroyable ! Tu as obtenu deux cartes d'un coup :\n• **{cartes_tirees[0]['nom']}** (*{cartes_tirees[0]['rarete']}*)\n• **{cartes_tirees[1]['nom']}** (*{cartes_tirees[1]['rarete']}*)"
+        couleur = discord.Color.gold()
+    else:
+        carte = cartes_tirees[0]
+        titre_embed = f"🎴 Tirage de Carte pour {interaction.user.name}"
+        desc_embed = f"Tu as tiré et gagné la carte **{carte['nom']}** !"
+        
+        couleurs = {
+            "Légendaire": discord.Color.gold(),
+            "Épique": discord.Color.purple(),
+            "Rare": discord.Color.blue(),
+            "Commun": discord.Color.light_grey()
+        }
+        couleur = couleurs.get(carte["rarete"], discord.Color.default())
 
     embed = discord.Embed(
-        title=f"🎴 Tirage de Carte pour {interaction.user.name}",
-        description=f"Tu as tiré et gagné la carte **{carte['nom']}** !",
+        title=titre_embed,
+        description=desc_embed,
         color=couleur
     )
-    embed.add_field(name="Rareté", value=carte["rarete"], inline=True)
-    embed.add_field(name="Description", value=carte["description"], inline=False)
+    if len(cartes_tirees) == 1:
+        embed.add_field(name="Rareté", value=cartes_tirees[0]["rarete"], inline=True)
+        embed.add_field(name="Description", value=cartes_tirees[0]["description"], inline=False)
+    
     embed.set_footer(text="Utilise /inventaire pour voir tes cartes possédées.")
-
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="inventaire", description="Afficher ton inventaire personnel de cartes Pokémon.")
@@ -368,7 +388,6 @@ class TradeView(discord.ui.View):
 
         self.traite = True
 
-        # Vérifier que le receveur possède bien la carte qu'il donne
         receveur_inv = self.bot_instance.user_inventories.get(self.receveur.id, [])
         carte_trouvee = None
         idx_demande = -1
@@ -382,18 +401,14 @@ class TradeView(discord.ui.View):
             await interaction.response.edit_message(content=f"❌ Échange annulé : {self.receveur.mention} ne possède plus la carte **{self.carte_demandee}** dans son inventaire.", view=None)
             return
 
-        # Vérifier que l'émetteur possède toujours sa carte
         emetteur_inv = self.bot_instance.user_inventories.get(self.emetteur.id, [])
         if self.idx_offert >= len(emetteur_inv) or emetteur_inv[self.idx_offert]['nom'] != self.carte_offerte['nom']:
             await interaction.response.edit_message(content=f"❌ Échange annulé : {self.emetteur.mention} ne possède plus cette carte.", view=None)
             return
 
-        # Effectuer le transfert des cartes
-        # 1. Retirer et donner chez l'émetteur
         c_offerte = emetteur_inv.pop(self.idx_offert)
         emetteur_inv.append(carte_trouvee)
 
-        # 2. Retirer et donner chez le receveur
         receveur_inv.pop(idx_demande)
         receveur_inv.append(c_offerte)
 
@@ -441,14 +456,11 @@ async def echanger(interaction: discord.Interaction, membre: discord.Member, num
     emetteur_inv = bot.user_inventories.get(user_id, [])
     idx = numero_carte - 1
 
-    # Vérifier que la carte proposée existe dans l'inventaire de l'émetteur
     if not (0 <= idx < len(emetteur_inv)):
         await interaction.response.send_message("❌ Numéro de carte invalide dans ton inventaire. Utilise `/inventaire` pour vérifier tes numéros.", ephemeral=True)
         return
 
     carte_offerte = emetteur_inv[idx]
-
-    # Vérifier que le destinataire possède bien la carte demandée
     destinataire_inv = bot.user_inventories.get(membre.id, [])
     possede_carte = any(c['nom'].lower() == nom_carte_voulue.lower() for c in destinataire_inv)
 
@@ -456,7 +468,6 @@ async def echanger(interaction: discord.Interaction, membre: discord.Member, num
         await interaction.response.send_message(f"❌ {membre.mention} ne possède pas la carte **{nom_carte_voulue}** dans son inventaire.", ephemeral=True)
         return
 
-    # Envoyer la proposition d'échange au destinataire avec des boutons
     embed = discord.Embed(
         title="🤝 Proposition d'échange de cartes",
         description=f"{interaction.user.mention} souhaite faire un échange avec toi !",
