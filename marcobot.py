@@ -54,6 +54,9 @@ class MarcoBot(commands.Bot):
         # 6. Système d'économie (user_id -> nombre de pièces d'or)
         self.user_money = {}
 
+        # 7. Suivi du dernier /work (user_id -> datetime)
+        self.dernier_work = {}
+
     async def setup_hook(self):
         GUILD_ID = discord.Object(id=1359606058922017001)  # Ton ID de serveur
         self.tree.copy_global_to(guild=GUILD_ID)
@@ -325,7 +328,6 @@ async def tirer_carte(interaction: discord.Interaction):
     if user_id not in bot.user_inventories:
         bot.user_inventories[user_id] = []
 
-    # 10% de chance d'obtenir 2 cartes d'un coup
     obtient_deux_cartes = random.random() < 0.10  
 
     if obtient_deux_cartes and len(bot.cartes_list) >= 2:
@@ -504,7 +506,7 @@ async def echanger(interaction: discord.Interaction, membre: discord.Member, num
 
 
 # ==========================================
-# 5. SYSTÈMES D'ÉCONOMIE (PIÈCES D'OR)
+# 5. SYSTÈMES D'ÉCONOMIE (OR, /work, /pile_ou_face)
 # ==========================================
 
 @bot.tree.command(name="solde", description="Consulter ton solde de pièces d'or.")
@@ -512,8 +514,6 @@ async def echanger(interaction: discord.Interaction, membre: discord.Member, num
 async def solde(interaction: discord.Interaction, membre: discord.Member = None):
     cible = membre if membre else interaction.user
     user_id = cible.id
-    
-    # Récupérer l'or (0 par défaut)
     or_actuel = bot.user_money.get(user_id, 0)
 
     embed = discord.Embed(
@@ -533,8 +533,6 @@ async def donner_or(interaction: discord.Interaction, membre: discord.Member, mo
         bot.user_money[user_id] = 0
         
     bot.user_money[user_id] += montant
-    
-    # Empêcher d'avoir un solde négatif
     if bot.user_money[user_id] < 0:
         bot.user_money[user_id] = 0
 
@@ -546,6 +544,82 @@ async def donner_or(interaction: discord.Interaction, membre: discord.Member, mo
     embed.add_field(name="Nouveau solde", value=f"**{bot.user_money[user_id]} pièces d'or**", inline=False)
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="work", description="Travailler pour gagner des pièces d'or (toutes les 4 heures).")
+async def work(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    maintenant = datetime.now()
+
+    # Cooldown de 4 heures pour le travail
+    if user_id in bot.dernier_work:
+        dernier_temps = bot.dernier_work[user_id]
+        prochain_work = dernier_temps + timedelta(hours=4)
+        
+        if maintenant < prochain_work:
+            temps_restant = prochain_work - maintenant
+            heures = int(temps_restant.total_seconds() // 3600)
+            minutes = int((temps_restant.total_seconds() % 3600) // 60)
+            
+            await interaction.response.send_message(
+                f"⏳ Tu es fatigué ! Tu pourras retravailler dans **{heures}h et {minutes}min**.", 
+                ephemeral=True
+            )
+            return
+
+    bot.dernier_work[user_id] = maintenant
+    gain = random.randint(20, 100) # Gagne entre 20 et 100 pièces aléatoirement
+
+    if user_id not in bot.user_money:
+        bot.user_money[user_id] = 0
+    bot.user_money[user_id] += gain
+
+    embed = discord.Embed(
+        title="💼 Journée de travail terminée !",
+        description=f"Tu as bossé dur et tu as gagné **{gain} pièces d'or** !",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Nouveau solde", value=f"**{bot.user_money[user_id]} pièces d'or**", inline=False)
+    embed.set_footer(text="Tu pourras refaire /work dans 4 heures.")
+    
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="pile_ou_face", description="Parie tes pièces d'or à pile ou face pour tenter de doubler ta mise !")
+@app_commands.describe(choix="Pile ou Face", mise="Nombre de pièces d'or à parier")
+@app_commands.choices(choix=[
+    app_commands.Choice(name="Pile", value="Pile"),
+    app_commands.Choice(name="Face", value="Face")
+])
+async def pile_ou_face(interaction: discord.Interaction, choix: str, mise: int):
+    user_id = interaction.user.id
+    solde_actuel = bot.user_money.get(user_id, 0)
+
+    if mise <= 0:
+        await interaction.response.send_message("❌ La mise doit être supérieure à 0 !", ephemeral=True)
+        return
+
+    if solde_actuel < mise:
+        await interaction.response.send_message(f"❌ Tu n'as pas assez d'or ! Ton solde actuel est de **{solde_actuel} pièces**.", ephemeral=True)
+        return
+
+    resultat = random.choice(["Pile", "Face"])
+
+    if choix == resultat:
+        bot.user_money[user_id] += mise # Il gagne le double de sa mise
+        embed = discord.Embed(
+            title="🎉 Gagné !",
+            description=f"La pièce est tombée sur **{resultat}** !\nTu as doublé ta mise et gagne **+{mise} pièces** !",
+            color=discord.Color.green()
+        )
+    else:
+        bot.user_money[user_id] -= mise # Il perd sa mise
+        embed = discord.Embed(
+            title="😢 Perdu...",
+            description=f"La pièce est tombée sur **{resultat}**.\nTu as perdu ta mise de **-{mise} pièces**.",
+            color=discord.Color.red()
+        )
+
+    embed.add_field(name="Nouveau solde", value=f"**{bot.user_money[user_id]} pièces d'or**", inline=False)
+    await interaction.response.send_message(embed=embed)
 
 
 # Gestion des erreurs de permissions admin
