@@ -16,13 +16,13 @@ class MarcoBot(commands.Bot):
         self.quetes_list = [
             {
                 "titre": "💬 Participer au chat", 
-                "description": "Envoyer au moins 10 messages dans les salons textuels.", 
-                "recompense": "50 pièces d'or"
+                "description": "Envoyer des messages dans les salons du serveur.", 
+                "recompense_or": 50
             },
             {
                 "titre": "🎮 Jouer avec la communauté", 
-                "description": "Participer à une session vocale ou un jeu sur le serveur.", 
-                "recompense": "100 pièces d'or + Rôle actif"
+                "description": "Participer à une session vocale.", 
+                "recompense_or": 100
             }
         ]
         
@@ -72,6 +72,7 @@ class MarcoBot(commands.Bot):
         self.dernier_tirage = {}
         self.user_money = {}
         self.dernier_work = {}
+        self.quetes_validees = {} # user_id -> liste des quêtes accomplies
 
     async def setup_hook(self):
         GUILD_ID = discord.Object(id=1359606058922017001)
@@ -87,44 +88,87 @@ async def on_ready():
 
 
 # ==========================================
-# 1. GESTION DES QUÊTES
+# 1. GESTION DES QUÊTES AVEC BOUTONS
 # ==========================================
 
-@bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une nouvelle quête journalière.")
-@app_commands.describe(titre="Titre de la quête", description="Description de ce qu'il faut faire", recompense="Récompense à gagner")
-@app_commands.checks.has_permissions(administrator=True)
-async def ajouter_quete(interaction: discord.Interaction, titre: str, description: str, recompense: str):
-    bot.quetes_list.append({"titre": titre, "description": description, "recompense": recompense})
-    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée !", ephemeral=True)
+class QueteView(discord.ui.View):
+    def __init__(self, bot_instance):
+        super().__init__(timeout=None) # Vue persistante ou active
+        self.bot_instance = bot_instance
 
-@bot.tree.command(name="supprimer_quete", description="[Admin] Supprimer une quête journalière via son numéro.")
-@app_commands.describe(numero="Numéro de la quête")
-@app_commands.checks.has_permissions(administrator=True)
-async def supprimer_quete(interaction: discord.Interaction, numero: int):
-    index = numero - 1
-    if 0 <= index < len(bot.quetes_list):
-        supp = bot.quetes_list.pop(index)
-        await interaction.response.send_message(f"🗑️ Quête **{supp['titre']}** supprimée.", ephemeral=True)
-    else:
-        await interaction.response.send_message("❌ Numéro invalide.", ephemeral=True)
+    @discord.ui.button(label="🎁 Réclamer Quête #1", style=discord.ButtonStyle.green, custom_id="quete_1")
+    async def btn_quete_1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.valider_quete(interaction, index=0)
 
-@bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières.")
+    @discord.ui.button(label="🎁 Réclamer Quête #2", style=discord.ButtonStyle.green, custom_id="quete_2")
+    async def btn_quete_2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.valider_quete(interaction, index=1)
+
+    async def valider_quete(self, interaction: discord.Interaction, index: int):
+        user_id = interaction.user.id
+        
+        if index >= len(self.bot_instance.quetes_list):
+            await interaction.response.send_message("❌ Cette quête n'existe plus.", ephemeral=True)
+            return
+
+        quete = self.bot_instance.quetes_list[index]
+
+        # Initialiser le suivi des quêtes de l'utilisateur si besoin
+        if user_id not in self.bot_instance.quetes_validees:
+            self.bot_instance.quetes_validees[user_id] = []
+
+        # Vérifier si l'utilisateur a déjà fait cette quête aujourd'hui
+        aujourdhui = datetime.now().strftime("%Y-%m-%d")
+        cle_quete = f"{index}_{aujourdhui}"
+
+        if cle_quete in self.bot_instance.quetes_validees[user_id]:
+            await interaction.response.send_message("⏳ Tu as déjà validé cette quête aujourd'hui ! Reviens demain.", ephemeral=True)
+            return
+
+        # Marquer comme validée et donner l'or
+        self.bot_instance.quetes_validees[user_id].append(cle_quete)
+        
+        recompense = quete["recompense_or"]
+        if user_id not in self.bot_instance.user_money:
+            self.bot_instance.user_money[user_id] = 0
+        self.bot_instance.user_money[user_id] += recompense
+
+        embed = discord.Embed(
+            title="🎉 Quête validée avec succès !",
+            description=f"Tu as accompli la quête : **{quete['titre']}** !\nTu remportes **{recompense} pièces d'or**.",
+            color=discord.Color.gold()
+        )
+        embed.add_field(name="Nouveau solde", value=f"**{self.bot_instance.user_money[user_id]} pièces d'or**", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières et récupérer tes récompenses.")
 async def quetes_journalieres(interaction: discord.Interaction):
-    embed = discord.Embed(title="🌟 Quêtes Journalières", color=discord.Color.gold())
+    embed = discord.Embed(
+        title="🌟 Quêtes Journalières",
+        description="Accomplis les objectifs ci-dessous et clique sur le bouton correspondant pour récupérer ton or !",
+        color=discord.Color.gold()
+    )
+    
     if not bot.quetes_list:
         embed.add_field(name="Aucune quête", value="Reviens plus tard !", inline=False)
+        await interaction.response.send_message(embed=embed)
     else:
         for i, q in enumerate(bot.quetes_list, start=1):
-            embed.add_field(name=f"Quête #{i} : {q['titre']}", value=f"**Objectif :** {q['description']}\n**Récompense :** {q['recompense']}", inline=False)
-    await interaction.response.send_message(embed=embed)
+            embed.add_field(
+                name=f"Quête #{i} : {q['titre']}", 
+                value=f"**Objectif :** {q['description']}\n**Récompense :** {q['recompense_or']} pièces d'or", 
+                inline=False
+            )
+        
+        view = QueteView(bot)
+        await interaction.response.send_message(embed=embed, view=view)
 
-@bot.tree.command(name="gerer_quetes", description="[Admin] Panneau de gestion des quêtes.")
+@bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une nouvelle quête journalière.")
+@app_commands.describe(titre="Titre de la quête", description="Description", recompense_or="Montant en pièces d'or")
 @app_commands.checks.has_permissions(administrator=True)
-async def gerer_quetes(interaction: discord.Interaction):
-    embed = discord.Embed(title="⚙️ Gestion des Quêtes", description=f"Total : {len(bot.quetes_list)} quêtes.", color=discord.Color.blue())
-    for i, q in enumerate(bot.quetes_list, start=1):
-        embed.add_field(name=f"#{i} - {q['titre']}", value=f"Récompense: {q['recompense']}", inline=True)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+async def ajouter_quete(interaction: discord.Interaction, titre: str, description: str, recompense_or: int):
+    bot.quetes_list.append({"titre": titre, "description": description, "recompense_or": recompense_or})
+    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée avec {recompense_or} pièces d'or de récompense !", ephemeral=True)
 
 
 # ==========================================
@@ -154,34 +198,9 @@ class QuizView(discord.ui.View):
                 for child in self.children:
                     child.disabled = True
                 await interaction.response.edit_message(content=f"🎉 Bravo {interaction.user.mention} ! C'était la bonne réponse (**{self.bonne_reponse}**) !", view=self)
-                
-                guild = interaction.guild
-                if guild:
-                    for member in guild.members:
-                        if member.guild_permissions.administrator and not member.bot:
-                            try:
-                                admin_embed = discord.Embed(title="🔔 Bonne réponse à un Quiz !", description=f"Membre : {interaction.user.mention}\nQuestion : {self.question}", color=discord.Color.gold())
-                                await member.send(embed=admin_embed)
-                            except discord.HTTPException:
-                                pass
             else:
-                await interaction.response.send_message("❌ Mauvaise réponse ! Vérifie tes messages privés.", ephemeral=True)
-                try:
-                    perdu_embed = discord.Embed(title="❌ Raté !", description=f"Mauvaise réponse à la question sur **{interaction.guild.name}**.", color=discord.Color.red())
-                    await interaction.user.send(embed=perdu_embed)
-                except discord.HTTPException:
-                    pass
+                await interaction.response.send_message("❌ Mauvaise réponse !", ephemeral=True)
         return button_callback
-
-@bot.tree.command(name="ajouter_quiz", description="[Admin] Ajouter un quiz.")
-@app_commands.checks.has_permissions(administrator=True)
-async def ajouter_quiz(interaction: discord.Interaction, question: str, opt1: str, opt2: str, opt3: str, opt4: str, bonne_reponse: str):
-    options = [opt1, opt2, opt3, opt4]
-    if bonne_reponse not in options:
-        await interaction.response.send_message("❌ La bonne réponse doit correspondre à l'une des options.", ephemeral=True)
-        return
-    bot.quiz_list.append({"question": question, "options": options, "reponse": bonne_reponse})
-    await interaction.response.send_message("❓ Quiz ajouté avec succès !", ephemeral=True)
 
 @bot.tree.command(name="quiz", description="Lancer une question de quiz.")
 async def quiz(interaction: discord.Interaction):
@@ -199,35 +218,11 @@ async def quiz(interaction: discord.Interaction):
 # ==========================================
 
 @bot.tree.command(name="ajouter_carte", description="[Admin] Ajouter une carte avec son image.")
-@app_commands.describe(nom="Nom du Pokémon", rarete="Commun, Rare, Épique, Légendaire", description="Description", lien_image="Lien direct de l'image (.png ou .jpg)")
+@app_commands.describe(nom="Nom", rarete="Commun/Rare/Épique/Légendaire", description="Description", lien_image="Lien direct de l'image")
 @app_commands.checks.has_permissions(administrator=True)
 async def ajouter_carte(interaction: discord.Interaction, nom: str, rarete: str, description: str, lien_image: str):
-    rarete_clean = rarete.capitalize()
-    if rarete_clean not in ["Commun", "Rare", "Épique", "Légendaire"]:
-        await interaction.response.send_message("❌ Rareté invalide (Commun, Rare, Épique, Légendaire).", ephemeral=True)
-        return
-
-    bot.cartes_list.append({
-        "nom": nom,
-        "rarete": rarete_clean,
-        "description": description,
-        "image": lien_image
-    })
-
-    embed = discord.Embed(title="🃏 Carte ajoutée !", description=f"**{nom}** ({rarete_clean}) a été créée.", color=discord.Color.green())
-    embed.set_image(url=lien_image)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="voir_cartes", description="Voir toutes les cartes du serveur.")
-async def voir_cartes(interaction: discord.Interaction):
-    if not bot.cartes_list:
-        await interaction.response.send_message("❌ Aucune carte disponible.", ephemeral=True)
-        return
-
-    embed = discord.Embed(title="📦 Catalogue des Cartes", color=discord.Color.gold())
-    for c in bot.cartes_list:
-        embed.add_field(name=f"{c['nom']} ({c['rarete']})", value=c['description'], inline=False)
-    await interaction.response.send_message(embed=embed)
+    bot.cartes_list.append({"nom": nom, "rarete": rarete.capitalize(), "description": description, "image": lien_image})
+    await interaction.response.send_message(f"🃏 Carte **{nom}** ajoutée !", ephemeral=True)
 
 @bot.tree.command(name="tirer_carte", description="Tirer ta carte quotidienne (1 fois toutes les 24h) !")
 async def tirer_carte(interaction: discord.Interaction):
@@ -242,119 +237,36 @@ async def tirer_carte(interaction: discord.Interaction):
         prochain = bot.dernier_tirage[user_id] + timedelta(hours=24)
         if maintenant < prochain:
             restant = prochain - maintenant
-            h = int(restant.total_seconds() // 3600)
-            m = int((restant.total_seconds() % 3600) // 60)
-            await interaction.response.send_message(f"⏳ Tu auras un nouveau tirage dans **{h}h et {m}min**.", ephemeral=True)
+            h, m = int(restant.total_seconds() // 3600), int((restant.total_seconds() % 3600) // 60)
+            await interaction.response.send_message(f"⏳ Prochain tirage dans **{h}h et {m}min**.", ephemeral=True)
             return
 
     bot.dernier_tirage[user_id] = maintenant
     if user_id not in bot.user_inventories:
         bot.user_inventories[user_id] = []
 
-    cartes_tirees = random.sample(bot.cartes_list, 2) if random.random() < 0.10 and len(bot.cartes_list) >= 2 else [random.choice(bot.cartes_list)]
+    carte = random.choice(bot.cartes_list)
+    bot.user_inventories[user_id].append(carte)
 
-    for carte in cartes_tirees:
-        bot.user_inventories[user_id].append(carte)
-
-    carte = cartes_tirees[0]
-    couleurs = {"Légendaire": discord.Color.gold(), "Épique": discord.Color.purple(), "Rare": discord.Color.blue(), "Commun": discord.Color.light_grey()}
-    
-    embed = discord.Embed(
-        title=f"🎴 Tirage de {interaction.user.name} : {carte['nom']}",
-        description=f"**Rareté :** {carte['rarete']}\n{carte['description']}",
-        color=couleurs.get(carte["rarete"], discord.Color.default())
-    )
+    embed = discord.Embed(title=f"🎴 Tirage de {interaction.user.name} : {carte['nom']}", description=f"**Rareté :** {carte['rarete']}\n{carte['description']}", color=discord.Color.gold())
     embed.set_image(url=carte["image"])
-    embed.set_footer(text="Utilise /inventaire pour voir tes cartes.")
-
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="inventaire", description="Voir ton inventaire de cartes.")
 async def inventaire(interaction: discord.Interaction):
     user_inv = bot.user_inventories.get(interaction.user.id, [])
     if not user_inv:
-        await interaction.response.send_message("❌ Ton inventaire est vide. Utilise `/tirer_carte` !", ephemeral=True)
+        await interaction.response.send_message("❌ Ton inventaire est vide.", ephemeral=True)
         return
-
     embed = discord.Embed(title=f"🎒 Inventaire de {interaction.user.name}", color=discord.Color.blurple())
     for idx, c in enumerate(user_inv, start=1):
         embed.add_field(name=f"#{idx} - {c['nom']} ({c['rarete']})", value=c['description'], inline=False)
-    
-    embed.set_thumbnail(url=user_inv[-1]["image"])
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ==========================================
-# 4. ÉCHANGES ET ÉCONOMIE
+# 4. ÉCONOMIE (/work, /solde, /pile_ou_face)
 # ==========================================
-
-class TradeView(discord.ui.View):
-    def __init__(self, bot_inst, emetteur, receveur, carte_offerte, carte_demandee, idx_offert):
-        super().__init__(timeout=60.0)
-        self.bot_inst = bot_inst
-        self.emetteur = emetteur
-        self.receveur = receveur
-        self.carte_offerte = carte_offerte
-        self.carte_demandee = carte_demandee
-        self.idx_offert = idx_offert
-        self.traite = False
-
-    @discord.ui.button(label="Accepter", style=discord.ButtonStyle.green)
-    async def accepter(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.receveur.id or self.traite:
-            await interaction.response.send_message("❌ Action impossible.", ephemeral=True)
-            return
-        self.traite = True
-
-        receveur_inv = self.bot_inst.user_inventories.get(self.receveur.id, [])
-        idx_demande = next((i for i, c in enumerate(receveur_inv) if c['nom'].lower() == self.carte_demandee.lower()), -1)
-        
-        if idx_demande == -1:
-            await interaction.response.edit_message(content="❌ Échange annulé : la carte demandée n'est plus disponible.", view=None)
-            return
-
-        emetteur_inv = self.bot_inst.user_inventories.get(self.emetteur.id, [])
-        c_offerte = emetteur_inv.pop(self.idx_offert)
-        c_demandee = receveur_inv.pop(idx_demande)
-
-        emetteur_inv.append(c_demandee)
-        receveur_inv.append(c_offerte)
-
-        embed = discord.Embed(title="🤝 Échange réussi !", description=f"Entre {self.emetteur.name} et {self.receveur.name}.", color=discord.Color.green())
-        await interaction.response.edit_message(content="", embed=embed, view=None)
-
-    @discord.ui.button(label="Refuser", style=discord.ButtonStyle.red)
-    async def refuser(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != self.receveur.id or self.traite:
-            await interaction.response.send_message("❌ Action impossible.", ephemeral=True)
-            return
-        self.traite = True
-        await interaction.response.edit_message(content="❌ Échange refusé.", embed=None, view=None)
-
-@bot.tree.command(name="echanger", description="Proposer un échange de carte.")
-@app_commands.describe(membre="Membre cible", numero_carte="Numéro dans ton inventaire", nom_carte_voulue="Nom de la carte voulue")
-async def echanger(interaction: discord.Interaction, membre: discord.Member, numero_carte: int, nom_carte_voulue: str):
-    if membre.id == interaction.user.id or membre.bot:
-        await interaction.response.send_message("❌ Cible invalide.", ephemeral=True)
-        return
-
-    user_inv = bot.user_inventories.get(interaction.user.id, [])
-    idx = numero_carte - 1
-    if not (0 <= idx < len(user_inv)):
-        await interaction.response.send_message("❌ Numéro de carte invalide dans ton inventaire.", ephemeral=True)
-        return
-
-    dest_inv = bot.user_inventories.get(membre.id, [])
-    if not any(c['nom'].lower() == nom_carte_voulue.lower() for c in dest_inv):
-        await interaction.response.send_message(f"❌ {membre.mention} ne possède pas cette carte.", ephemeral=True)
-        return
-
-    carte_offerte = user_inv[idx]
-    embed = discord.Embed(title="🤝 Proposition d'échange", description=f"{interaction.user.mention} propose **{carte_offerte['nom']}** contre ta carte **{nom_carte_voulue}**.", color=discord.Color.gold())
-    embed.set_thumbnail(url=carte_offerte["image"])
-
-    view = TradeView(bot, interaction.user, membre, carte_offerte, nom_carte_voulue, idx)
-    await interaction.response.send_message(content=f"{membre.mention}, tu as une proposition !", embed=embed, view=view)
 
 @bot.tree.command(name="solde", description="Voir ton solde de pièces d'or.")
 async def solde(interaction: discord.Interaction, membre: discord.Member = None):
@@ -362,12 +274,6 @@ async def solde(interaction: discord.Interaction, membre: discord.Member = None)
     or_actuel = bot.user_money.get(cible.id, 0)
     embed = discord.Embed(title=f"💰 Portefeuille de {cible.name}", description=f"**{or_actuel} pièces d'or**", color=discord.Color.gold())
     await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="donner_or", description="[Admin] Donner de l'or.")
-@app_commands.checks.has_permissions(administrator=True)
-async def donner_or(interaction: discord.Interaction, membre: discord.Member, montant: int):
-    bot.user_money[membre.id] = max(0, bot.user_money.get(membre.id, 0) + montant)
-    await interaction.response.send_message(f"🪙 Solde de {membre.mention} mis à jour : **{bot.user_money[membre.id]} pièces**.", ephemeral=True)
 
 @bot.tree.command(name="work", description="Travailler pour gagner de l'or (toutes les 4h).")
 async def work(interaction: discord.Interaction):
@@ -405,19 +311,6 @@ async def pile_ou_face(interaction: discord.Interaction, choix: str, mise: int):
     
     await interaction.response.send_message(embed=embed)
 
-
-# Erreurs
-@ajouter_quete.error
-@supprimer_quete.error
-@gerer_quetes.error
-@ajouter_quiz.error
-@ajouter_carte.error
-@donner_or.error
-async def admin_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.errors.MissingPermissions):
-        await interaction.response.send_message("❌ Permission refusée.", ephemeral=True)
-    else:
-        await interaction.response.send_message("❌ Une erreur est survenue.", ephemeral=True)
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 if TOKEN:
