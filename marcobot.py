@@ -88,7 +88,7 @@ async def on_ready():
 
 
 # ==========================================
-# 1. GESTION DES QUÊTES AVEC BOUTONS DYNAMIQUES
+# 1. GESTION DES QUÊTES (AJOUT, SUPPRESSION, BOUTONS)
 # ==========================================
 
 class DynamicQueteView(discord.ui.View):
@@ -96,14 +96,12 @@ class DynamicQueteView(discord.ui.View):
         super().__init__(timeout=None)
         self.bot_instance = bot_instance
 
-        # On crée dynamiquement un bouton pour chaque quête active dans la liste
         for index, quete in enumerate(self.bot_instance.quetes_list):
             button = discord.ui.Button(
                 label=f"🎁 Réclamer : {quete['titre']}", 
                 style=discord.ButtonStyle.green, 
                 custom_id=f"quete_dyn_{index}"
             )
-            # On associe le bouton à une fonction de callback propre à cet index
             button.callback = self.create_callback(index)
             self.add_item(button)
 
@@ -120,7 +118,6 @@ class DynamicQueteView(discord.ui.View):
             if user_id not in self.bot_instance.quetes_validees:
                 self.bot_instance.quetes_validees[user_id] = []
 
-            # Vérifier si la quête a déjà été faite aujourd'hui
             aujourdhui = datetime.now().strftime("%Y-%m-%d")
             cle_quete = f"{index}_{aujourdhui}"
 
@@ -128,7 +125,6 @@ class DynamicQueteView(discord.ui.View):
                 await interaction.response.send_message("⏳ Tu as déjà validé cette quête aujourd'hui ! Reviens demain.", ephemeral=True)
                 return
 
-            # Valider et attribuer l'or
             self.bot_instance.quetes_validees[user_id].append(cle_quete)
             
             recompense = quete["recompense_or"]
@@ -165,7 +161,6 @@ async def quetes_journalieres(interaction: discord.Interaction):
                 inline=False
             )
         
-        # On génère la vue avec les boutons dynamiques basés sur les quêtes actuelles
         view = DynamicQueteView(bot)
         await interaction.response.send_message(embed=embed, view=view)
 
@@ -174,7 +169,18 @@ async def quetes_journalieres(interaction: discord.Interaction):
 @app_commands.checks.has_permissions(administrator=True)
 async def ajouter_quete(interaction: discord.Interaction, titre: str, description: str, recompense_or: int):
     bot.quetes_list.append({"titre": titre, "description": description, "recompense_or": recompense_or})
-    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée ! Un bouton sera automatiquement créé lors de l'affichage des quêtes.", ephemeral=True)
+    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée avec succès !", ephemeral=True)
+
+@bot.tree.command(name="supprimer_quete", description="[Admin] Supprimer une quête via son numéro.")
+@app_commands.describe(numero="Numéro de la quête (ex: 1, 2...)")
+@app_commands.checks.has_permissions(administrator=True)
+async def supprimer_quete(interaction: discord.Interaction, numero: int):
+    index = numero - 1
+    if 0 <= index < len(bot.quetes_list):
+        quete_supprimee = bot.quetes_list.pop(index)
+        await interaction.response.send_message(f"🗑️ Quête **#{numero} - {quete_supprimee['titre']}** supprimée avec succès !", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Numéro de quête invalide. Vérifie le numéro avec `/quetes_journalieres`.", ephemeral=True)
 
 
 # ==========================================
