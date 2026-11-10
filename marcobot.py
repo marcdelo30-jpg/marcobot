@@ -34,13 +34,13 @@ class MarcoBot(commands.Bot):
             }
         ]
 
-        # 3. Base de données des cartes AVEC les liens d'images (tu pourras remplacer les liens par les tiens)
+        # Base de données des cartes avec liens d'images
         self.cartes_list = [
             {
                 "nom": "Pikachu", 
                 "rarete": "Commun", 
                 "description": "Une souris électrique pleine d'énergie.",
-                "image": "https://images.unsplash.com/photo-1613771404784-3a5686aa2be3?w=500" # Exemple de lien d'image
+                "image": "https://images.unsplash.com/photo-1613771404784-3a5686aa2be3?w=500"
             },
             {
                 "nom": "Bulbizarre", 
@@ -195,7 +195,7 @@ async def quiz(interaction: discord.Interaction):
 
 
 # ==========================================
-# 3. CARTES POKÉMON (AVEC IMAGES) & TIRAGE 24H
+# 3. CARTES POKÉMON & TIRAGE 24H
 # ==========================================
 
 @bot.tree.command(name="ajouter_carte", description="[Admin] Ajouter une carte avec son image.")
@@ -244,21 +244,19 @@ async def tirer_carte(interaction: discord.Interaction):
             restant = prochain - maintenant
             h = int(restant.total_seconds() // 3600)
             m = int((restant.total_seconds() % 3600) // 60)
-            await interaction.response.send_message(f"⏳ Prochain tirage dans **{h}h et {m}min**.", ephemeral=True)
+            await interaction.response.send_message(f"⏳ Tu auras un nouveau tirage dans **{h}h et {m}min**.", ephemeral=True)
             return
 
     bot.dernier_tirage[user_id] = maintenant
     if user_id not in bot.user_inventories:
         bot.user_inventories[user_id] = []
 
-    # 10% de chance d'avoir 2 cartes
     cartes_tirees = random.sample(bot.cartes_list, 2) if random.random() < 0.10 and len(bot.cartes_list) >= 2 else [random.choice(bot.cartes_list)]
 
     for carte in cartes_tirees:
         bot.user_inventories[user_id].append(carte)
 
-    # Affichage de la carte tirée avec son image
-    carte = cartes_tirees[0] # On affiche la première (ou principale) carte avec son image
+    carte = cartes_tirees[0]
     couleurs = {"Légendaire": discord.Color.gold(), "Épique": discord.Color.purple(), "Rare": discord.Color.blue(), "Commun": discord.Color.light_grey()}
     
     embed = discord.Embed(
@@ -266,7 +264,7 @@ async def tirer_carte(interaction: discord.Interaction):
         description=f"**Rareté :** {carte['rarete']}\n{carte['description']}",
         color=couleurs.get(carte["rarete"], discord.Color.default())
     )
-    embed.set_image(url=carte["image"]) # Affiche l'image de la carte en grand !
+    embed.set_image(url=carte["image"])
     embed.set_footer(text="Utilise /inventaire pour voir tes cartes.")
 
     await interaction.response.send_message(embed=embed)
@@ -282,7 +280,6 @@ async def inventaire(interaction: discord.Interaction):
     for idx, c in enumerate(user_inv, start=1):
         embed.add_field(name=f"#{idx} - {c['nom']} ({c['rarete']})", value=c['description'], inline=False)
     
-    # Met l'image de la dernière carte possédée en aperçu (ou enlève si tu préfères)
     embed.set_thumbnail(url=user_inv[-1]["image"])
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -379,3 +376,51 @@ async def work(interaction: discord.Interaction):
     if user_id in bot.dernier_work and maintenant < bot.dernier_work[user_id] + timedelta(hours=4):
         restant = (bot.dernier_work[user_id] + timedelta(hours=4)) - maintenant
         h, m = int(restant.total_seconds() // 3600), int((restant.total_seconds() % 3600) // 60)
+        await interaction.response.send_message(f"⏳ Tu es fatigué. Reviens dans {h}h et {m}min.", ephemeral=True)
+        return
+
+    bot.dernier_work[user_id] = maintenant
+    gain = random.randint(20, 100)
+    bot.user_money[user_id] = bot.user_money.get(user_id, 0) + gain
+
+    embed = discord.Embed(title="💼 Travail accompli !", description=f"Tu as gagné **{gain} pièces d'or** !", color=discord.Color.green())
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="pile_ou_face", description="Parier de l'or.")
+@app_commands.choices(choix=[app_commands.Choice(name="Pile", value="Pile"), app_commands.Choice(name="Face", value="Face")])
+async def pile_ou_face(interaction: discord.Interaction, choix: str, mise: int):
+    user_id = interaction.user.id
+    solde_actuel = bot.user_money.get(user_id, 0)
+    if mise <= 0 or solde_actuel < mise:
+        await interaction.response.send_message("❌ Mise invalide ou solde insuffisant.", ephemeral=True)
+        return
+
+    resultat = random.choice(["Pile", "Face"])
+    if choix == resultat:
+        bot.user_money[user_id] += mise
+        embed = discord.Embed(title="🎉 Gagné !", description=f"C'était **{resultat}** ! Tu gagnes +{mise} pièces.", color=discord.Color.green())
+    else:
+        bot.user_money[user_id] -= mise
+        embed = discord.Embed(title="😢 Perdu...", description=f"C'était **{resultat}**... Tu perds -{mise} pièces.", color=discord.Color.red())
+    
+    await interaction.response.send_message(embed=embed)
+
+
+# Erreurs
+@ajouter_quete.error
+@supprimer_quete.error
+@gerer_quetes.error
+@ajouter_quiz.error
+@ajouter_carte.error
+@donner_or.error
+async def admin_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.errors.MissingPermissions):
+        await interaction.response.send_message("❌ Permission refusée.", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Une erreur est survenue.", ephemeral=True)
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+if TOKEN:
+    bot.run(TOKEN)
+else:
+    print("Erreur : Token introuvable.")
