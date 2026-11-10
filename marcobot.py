@@ -88,58 +88,63 @@ async def on_ready():
 
 
 # ==========================================
-# 1. GESTION DES QUÊTES AVEC BOUTONS
+# 1. GESTION DES QUÊTES AVEC BOUTONS DYNAMIQUES
 # ==========================================
 
-class QueteView(discord.ui.View):
+class DynamicQueteView(discord.ui.View):
     def __init__(self, bot_instance):
-        super().__init__(timeout=None) # Vue persistante ou active
+        super().__init__(timeout=None)
         self.bot_instance = bot_instance
 
-    @discord.ui.button(label="🎁 Réclamer Quête #1", style=discord.ButtonStyle.green, custom_id="quete_1")
-    async def btn_quete_1(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.valider_quete(interaction, index=0)
+        # On crée dynamiquement un bouton pour chaque quête active dans la liste
+        for index, quete in enumerate(self.bot_instance.quetes_list):
+            button = discord.ui.Button(
+                label=f"🎁 Réclamer : {quete['titre']}", 
+                style=discord.ButtonStyle.green, 
+                custom_id=f"quete_dyn_{index}"
+            )
+            # On associe le bouton à une fonction de callback propre à cet index
+            button.callback = self.create_callback(index)
+            self.add_item(button)
 
-    @discord.ui.button(label="🎁 Réclamer Quête #2", style=discord.ButtonStyle.green, custom_id="quete_2")
-    async def btn_quete_2(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.valider_quete(interaction, index=1)
+    def create_callback(self, index):
+        async def button_callback(interaction: discord.Interaction):
+            user_id = interaction.user.id
+            
+            if index >= len(self.bot_instance.quetes_list):
+                await interaction.response.send_message("❌ Cette quête n'existe plus.", ephemeral=True)
+                return
 
-    async def valider_quete(self, interaction: discord.Interaction, index: int):
-        user_id = interaction.user.id
-        
-        if index >= len(self.bot_instance.quetes_list):
-            await interaction.response.send_message("❌ Cette quête n'existe plus.", ephemeral=True)
-            return
+            quete = self.bot_instance.quetes_list[index]
 
-        quete = self.bot_instance.quetes_list[index]
+            if user_id not in self.bot_instance.quetes_validees:
+                self.bot_instance.quetes_validees[user_id] = []
 
-        # Initialiser le suivi des quêtes de l'utilisateur si besoin
-        if user_id not in self.bot_instance.quetes_validees:
-            self.bot_instance.quetes_validees[user_id] = []
+            # Vérifier si la quête a déjà été faite aujourd'hui
+            aujourdhui = datetime.now().strftime("%Y-%m-%d")
+            cle_quete = f"{index}_{aujourdhui}"
 
-        # Vérifier si l'utilisateur a déjà fait cette quête aujourd'hui
-        aujourdhui = datetime.now().strftime("%Y-%m-%d")
-        cle_quete = f"{index}_{aujourdhui}"
+            if cle_quete in self.bot_instance.quetes_validees[user_id]:
+                await interaction.response.send_message("⏳ Tu as déjà validé cette quête aujourd'hui ! Reviens demain.", ephemeral=True)
+                return
 
-        if cle_quete in self.bot_instance.quetes_validees[user_id]:
-            await interaction.response.send_message("⏳ Tu as déjà validé cette quête aujourd'hui ! Reviens demain.", ephemeral=True)
-            return
+            # Valider et attribuer l'or
+            self.bot_instance.quetes_validees[user_id].append(cle_quete)
+            
+            recompense = quete["recompense_or"]
+            if user_id not in self.bot_instance.user_money:
+                self.bot_instance.user_money[user_id] = 0
+            self.bot_instance.user_money[user_id] += recompense
 
-        # Marquer comme validée et donner l'or
-        self.bot_instance.quetes_validees[user_id].append(cle_quete)
-        
-        recompense = quete["recompense_or"]
-        if user_id not in self.bot_instance.user_money:
-            self.bot_instance.user_money[user_id] = 0
-        self.bot_instance.user_money[user_id] += recompense
+            embed = discord.Embed(
+                title="🎉 Quête validée avec succès !",
+                description=f"Tu as accompli la quête : **{quete['titre']}** !\nTu remportes **{recompense} pièces d'or**.",
+                color=discord.Color.gold()
+            )
+            embed.add_field(name="Nouveau solde", value=f"**{self.bot_instance.user_money[user_id]} pièces d'or**", inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        embed = discord.Embed(
-            title="🎉 Quête validée avec succès !",
-            description=f"Tu as accompli la quête : **{quete['titre']}** !\nTu remportes **{recompense} pièces d'or**.",
-            color=discord.Color.gold()
-        )
-        embed.add_field(name="Nouveau solde", value=f"**{self.bot_instance.user_money[user_id]} pièces d'or**", inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return button_callback
 
 @bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières et récupérer tes récompenses.")
 async def quetes_journalieres(interaction: discord.Interaction):
@@ -160,7 +165,8 @@ async def quetes_journalieres(interaction: discord.Interaction):
                 inline=False
             )
         
-        view = QueteView(bot)
+        # On génère la vue avec les boutons dynamiques basés sur les quêtes actuelles
+        view = DynamicQueteView(bot)
         await interaction.response.send_message(embed=embed, view=view)
 
 @bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une nouvelle quête journalière.")
@@ -168,7 +174,7 @@ async def quetes_journalieres(interaction: discord.Interaction):
 @app_commands.checks.has_permissions(administrator=True)
 async def ajouter_quete(interaction: discord.Interaction, titre: str, description: str, recompense_or: int):
     bot.quetes_list.append({"titre": titre, "description": description, "recompense_or": recompense_or})
-    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée avec {recompense_or} pièces d'or de récompense !", ephemeral=True)
+    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée ! Un bouton sera automatiquement créé lors de l'affichage des quêtes.", ephemeral=True)
 
 
 # ==========================================
