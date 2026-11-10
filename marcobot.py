@@ -378,4 +378,4 @@ async def work(interaction: discord.Interaction):
     maintenant = datetime.now()
     if user_id in bot.dernier_work and maintenant < bot.dernier_work[user_id] + timedelta(hours=4):
         restant = (bot.dernier_work[user_id] + timedelta(hours=4)) - maintenant
-        h, m = int(restant.total_seconds() // 3600), int((restant.total_seconds() % 3
+        h, m = int(restant.total_seconds() // 3600), int((restant.total_seconds() % 3600) // 60)
