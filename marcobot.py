@@ -10,6 +10,11 @@ intents.message_content = True
 intents.members = True
 intents.voice_states = True
 
+# ----------------------------------------------------
+# REMPLACE CET ID PAR L'ID DU SALON OÙ TU VEUX LES LOGS
+# ----------------------------------------------------
+ID_SALON_LOGS_QUETES = 1570182850056294471
+
 class MarcoBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents)
@@ -88,12 +93,20 @@ class MarcoBot(commands.Bot):
         await self.tree.sync(guild=GUILD_ID)
         print("Commandes synchronisées avec succès !")
 
-# CRÉATION DE L'OBJET BOT EN PREMIER POUR ÉVITER LE NameError
+# CREATION DE L'OBJET BOT EN PREMIER
 bot = MarcoBot()
 
 @bot.event
 async def on_ready():
     print(f"Connecté en tant que {bot.user} (ID: {bot.user.id})")
+
+
+# Fonction utilitaire pour récupérer le salon cible
+def get_log_channel(guild, fallback_channel=None):
+    channel = guild.get_channel(ID_SALON_LOGS_QUETES)
+    if channel:
+        return channel
+    return fallback_channel
 
 
 # ==========================================
@@ -129,10 +142,10 @@ async def on_message(message):
                 recompense = quete["recompense_or"]
                 bot.user_money[user_id] = bot.user_money.get(user_id, 0) + recompense
 
-                try:
-                    await message.author.send(f"🎉 **Quête accomplie !**\nTu as validé : **{quete['titre']}** et gagné **{recompense} pièces d'or** !")
-                except discord.HTTPException:
-                    pass
+                target_channel = get_log_channel(message.guild, message.channel)
+                await target_channel.send(
+                    f"🎉 Bravo {message.author.mention} ! Tu as validé la quête **{quete['titre']}** et gagné **{recompense} pièces d'or** !"
+                )
             break
 
     await bot.process_commands(message)
@@ -163,10 +176,17 @@ async def on_voice_state_update(member, before, after):
                 recompense = quete["recompense_or"]
                 bot.user_money[user_id] = bot.user_money.get(user_id, 0) + recompense
 
-                try:
-                    await member.send(f"🎉 **Quête Vocale accomplie !**\nTu as rejoint un salon vocal, tu gagnes **{recompense} pièces d'or** !")
-                except discord.HTTPException:
-                    pass
+                target_channel = get_log_channel(after.channel.guild, after.channel.guild.system_channel)
+                if not target_channel:
+                    for channel in after.channel.guild.text_channels:
+                        if channel.permissions_for(after.channel.guild.me).send_messages:
+                            target_channel = channel
+                            break
+
+                if target_channel:
+                    await target_channel.send(
+                        f"🎙️ Bravo {member.mention} ! En rejoignant le salon vocal **{after.channel.name}**, tu as validé la quête **{quete['titre']}** et gagné **{recompense} pièces d'or** !"
+                    )
                 break
 
 
@@ -189,7 +209,6 @@ class DynamicQueteView(discord.ui.View):
                 if maintenant < self.bot_instance.dernieres_quetes[cle_suivi] + cooldown:
                     est_en_cooldown = True
 
-            # Personnalisation du texte selon si la quête est déjà accomplie ou non
             label_texte = f"✅ Déjà accomplie" if est_en_cooldown else f"📜 {quete['titre']}"
             
             button = discord.ui.Button(
