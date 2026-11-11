@@ -88,7 +88,7 @@ class MarcoBot(commands.Bot):
         await self.tree.sync(guild=GUILD_ID)
         print("Commandes synchronisées avec succès !")
 
-# CREATION DE L'OBJET BOT ICI (C'est cette ligne qui manquait au début)
+# CRÉATION DE L'OBJET BOT EN PREMIER POUR ÉVITER LE NameError
 bot = MarcoBot()
 
 @bot.event
@@ -175,14 +175,27 @@ async def on_voice_state_update(member, before, after):
 # ==========================================
 
 class DynamicQueteView(discord.ui.View):
-    def __init__(self, bot_instance):
+    def __init__(self, bot_instance, user_id):
         super().__init__(timeout=None)
         self.bot_instance = bot_instance
 
         for index, quete in enumerate(self.bot_instance.quetes_list):
+            cle_suivi = (user_id, index)
+            maintenant = datetime.now()
+            cooldown = timedelta(hours=quete.get("cooldown_heures", 24))
+            
+            est_en_cooldown = False
+            if cle_suivi in self.bot_instance.dernieres_quetes:
+                if maintenant < self.bot_instance.dernieres_quetes[cle_suivi] + cooldown:
+                    est_en_cooldown = True
+
+            # Personnalisation du texte selon si la quête est déjà accomplie ou non
+            label_texte = f"✅ Déjà accomplie" if est_en_cooldown else f"📜 {quete['titre']}"
+            
             button = discord.ui.Button(
-                label=f" quete 😁 : {quete['titre']}", 
-                style=discord.ButtonStyle.blurple, 
+                label=label_texte, 
+                style=discord.ButtonStyle.secondary if est_en_cooldown else discord.ButtonStyle.blurple, 
+                disabled=est_en_cooldown,
                 custom_id=f"quete_info_{index}"
             )
             button.callback = self.create_callback(index)
@@ -224,7 +237,7 @@ async def quetes_journalieres(interaction: discord.Interaction, role_a_mentionne
                 inline=False
             )
         
-        view = DynamicQueteView(bot)
+        view = DynamicQueteView(bot, interaction.user.id)
         await interaction.response.send_message(content=content_text, embed=embed, view=view, allowed_mentions=allowed)
 
 @bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une quête (chat ou vocal).")
