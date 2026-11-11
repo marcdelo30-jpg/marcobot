@@ -19,13 +19,15 @@ class MarcoBot(commands.Bot):
                 "description": "Envoyer 5 messages dans les salons du serveur après avoir accepté la quête.", 
                 "recompense_or": 50,
                 "objectif_messages": 5,
-                "cooldown_heures": 24
+                "cooldown_heures": 24,
+                "role_mention": None
             },
             {
                 "titre": "🎮 Jouer avec la communauté", 
                 "description": "Participer à une session vocale.", 
                 "recompense_or": 100,
-                "cooldown_heures": 24
+                "cooldown_heures": 24,
+                "role_mention": None
             }
         ]
         
@@ -201,23 +203,22 @@ class DynamicQueteView(discord.ui.View):
         return button_callback
 
 @bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières.")
-@app_commands.choices(mention=[
-    app_commands.Choice(name="Aucune mention", value="none"),
-    app_commands.Choice(name="@everyone", value="everyone"),
-    app_commands.Choice(name="@here", value="here")
-])
-async def quetes_journalieres(interaction: discord.Interaction, mention: str = "none"):
+async def quetes_journalieres(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🌟 Quêtes Journalières",
         description="Clique sur 'Accepter' pour lancer une quête !",
         color=discord.Color.gold()
     )
     
+    # Construire le texte de mention s'il y a un rôle lié aux quêtes
     content_text = None
-    if mention == "everyone":
-        content_text = "@everyone 📢 Nouvelles quêtes disponibles !"
-    elif mention == "here":
-        content_text = "@here 📢 Nouvelles quêtes disponibles !"
+    roles_a_mentionner = []
+    for q in bot.quetes_list:
+        if q.get("role_mention"):
+            roles_a_mentionner.append(q["role_mention"].mention)
+            
+    if roles_a_mentionner:
+        content_text = "📢 Nouvelle quête pour : " + ", ".join(set(roles_a_mentionner))
 
     if not bot.quetes_list:
         embed.add_field(name="Aucune quête", value="Reviens plus tard !", inline=False)
@@ -233,18 +234,27 @@ async def quetes_journalieres(interaction: discord.Interaction, mention: str = "
         view = DynamicQueteView(bot)
         await interaction.response.send_message(content=content_text, embed=embed, view=view)
 
-@bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une nouvelle quête journalière.")
-@app_commands.describe(titre="Titre", description="Description", recompense_or="Pièces d'or", cooldown_heures="Temps d'attente en heures")
+@bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une nouvelle quête avec un rôle à mentionner.")
+@app_commands.describe(
+    titre="Titre de la quête", 
+    description="Description", 
+    recompense_or="Pièces d'or", 
+    cooldown_heures="Temps d'attente en heures", 
+    role_a_mentionner="Le rôle à mentionner dans le serveur"
+)
 @app_commands.checks.has_permissions(administrator=True)
-async def ajouter_quete(interaction: discord.Interaction, titre: str, description: str, recompense_or: int, cooldown_heures: int = 24):
+async def ajouter_quete(interaction: discord.Interaction, titre: str, description: str, recompense_or: int, cooldown_heures: int = 24, role_a_mentionner: discord.Role = None):
     bot.quetes_list.append({
         "titre": titre, 
         "description": description, 
         "recompense_or": recompense_or, 
         "objectif_messages": 5,
-        "cooldown_heures": cooldown_heures
+        "cooldown_heures": cooldown_heures,
+        "role_mention": role_a_mentionner
     })
-    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée !", ephemeral=True)
+    
+    role_info = f" avec mention du rôle {role_a_mentionner.mention}" if role_a_mentionner else ""
+    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée{role_info} !", ephemeral=True)
 
 @bot.tree.command(name="supprimer_quete", description="[Admin] Supprimer une quête via son numéro.")
 @app_commands.describe(numero="Numéro de la quête")
@@ -259,7 +269,7 @@ async def supprimer_quete(interaction: discord.Interaction, numero: int):
 
 
 # ==========================================
-# 2. GESTION DES QUIZ AVEC MENTIONS
+# 2. GESTION DES QUIZ
 # ==========================================
 
 class QuizView(discord.ui.View):
@@ -289,13 +299,8 @@ class QuizView(discord.ui.View):
                 await interaction.response.send_message("❌ Mauvaise réponse !", ephemeral=True)
         return button_callback
 
-@bot.tree.command(name="quiz", description="Lancer une question de quiz avec option de mention.")
-@app_commands.choices(mention=[
-    app_commands.Choice(name="Aucune mention", value="none"),
-    app_commands.Choice(name="@everyone", value="everyone"),
-    app_commands.Choice(name="@here", value="here")
-])
-async def quiz(interaction: discord.Interaction, mention: str = "none"):
+@bot.tree.command(name="quiz", description="Lancer une question de quiz.")
+async def quiz(interaction: discord.Interaction):
     if not bot.quiz_list:
         await interaction.response.send_message("❌ Aucun quiz disponible.", ephemeral=True)
         return
@@ -304,13 +309,7 @@ async def quiz(interaction: discord.Interaction, mention: str = "none"):
     embed = discord.Embed(title="🧠 Quiz du serveur !", description=f"**{q_data['question']}**", color=discord.Color.blue())
     view = QuizView(q_data["options"], q_data["reponse"], q_data["question"])
 
-    content_text = None
-    if mention == "everyone":
-        content_text = "@everyone 🧠 **Nouveau Quiz disponible !**"
-    elif mention == "here":
-        content_text = "@here 🧠 **Nouveau Quiz disponible !**"
-
-    await interaction.response.send_message(content=content_text, embed=embed, view=view)
+    await interaction.response.send_message(embed=embed, view=view)
 
 
 # ==========================================
@@ -337,7 +336,8 @@ async def tirer_carte(interaction: discord.Interaction):
         prochain = bot.dernier_tirage[user_id] + timedelta(hours=24)
         if maintenant < prochain:
             restant = prochain - maintenant
-            h, m = int(restant.total_seconds() // 3600), int((restant.total_seconds() % 3600) // 60)
+            h = int(restant.total_seconds() // 3600)
+            m = int((restant.total_seconds() % 3600) // 60)
             await interaction.response.send_message(f"⏳ Prochain tirage dans **{h}h et {m}min**.", ephemeral=True)
             return
 
