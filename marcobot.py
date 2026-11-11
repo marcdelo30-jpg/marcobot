@@ -181,7 +181,7 @@ class DynamicQueteView(discord.ui.View):
 
         for index, quete in enumerate(self.bot_instance.quetes_list):
             button = discord.ui.Button(
-                label=f"⚔️ Info : {quete['titre']}", 
+                label=f" quete 😁 : {quete['titre']}", 
                 style=discord.ButtonStyle.blurple, 
                 custom_id=f"quete_info_{index}"
             )
