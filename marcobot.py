@@ -202,27 +202,35 @@ class DynamicQueteView(discord.ui.View):
 
         return button_callback
 
-@bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières.")
-async def quetes_journalieres(interaction: discord.Interaction):
+@bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières et notifier les membres.")
+@app_commands.describe(role_a_mentionner="Rôle optionnel à mentionner avec l'affichage des quêtes")
+async def quetes_journalieres(interaction: discord.Interaction, role_a_mentionner: discord.Role = None):
     embed = discord.Embed(
         title="🌟 Quêtes Journalières",
         description="Clique sur 'Accepter' pour lancer une quête !",
         color=discord.Color.gold()
     )
     
-    # Construire le texte de mention s'il y a un rôle lié aux quêtes
-    content_text = None
-    roles_a_mentionner = []
+    # Construire le texte de mention
+    content_text = ""
+    if role_a_mentionner:
+        content_text += f"{role_a_mentionner.mention} "
+        
     for q in bot.quetes_list:
-        if q.get("role_mention"):
-            roles_a_mentionner.append(q["role_mention"].mention)
-            
-    if roles_a_mentionner:
-        content_text = "📢 Nouvelle quête pour : " + ", ".join(set(roles_a_mentionner))
+        if q.get("role_mention") and q["role_mention"] != role_a_mentionner:
+            content_text += f"{q['role_mention'].mention} "
+
+    if content_text.strip():
+        content_text += "📢 **Nouvelles quêtes disponibles !**"
+    else:
+        content_text = None
+
+    # Autoriser la mention effective par Discord
+    allowed = discord.AllowedMentions(roles=True, everyone=True)
 
     if not bot.quetes_list:
         embed.add_field(name="Aucune quête", value="Reviens plus tard !", inline=False)
-        await interaction.response.send_message(content=content_text, embed=embed)
+        await interaction.response.send_message(content=content_text, embed=embed, allowed_mentions=allowed)
     else:
         for i, q in enumerate(bot.quetes_list, start=1):
             embed.add_field(
@@ -232,7 +240,7 @@ async def quetes_journalieres(interaction: discord.Interaction):
             )
         
         view = DynamicQueteView(bot)
-        await interaction.response.send_message(content=content_text, embed=embed, view=view)
+        await interaction.response.send_message(content=content_text, embed=embed, view=view, allowed_mentions=allowed)
 
 @bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une nouvelle quête avec un rôle à mentionner.")
 @app_commands.describe(
@@ -254,7 +262,8 @@ async def ajouter_quete(interaction: discord.Interaction, titre: str, descriptio
     })
     
     role_info = f" avec mention du rôle {role_a_mentionner.mention}" if role_a_mentionner else ""
-    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée{role_info} !", ephemeral=True)
+    allowed = discord.AllowedMentions(roles=True)
+    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée{role_info} !", ephemeral=True, allowed_mentions=allowed)
 
 @bot.tree.command(name="supprimer_quete", description="[Admin] Supprimer une quête via son numéro.")
 @app_commands.describe(numero="Numéro de la quête")
@@ -299,8 +308,9 @@ class QuizView(discord.ui.View):
                 await interaction.response.send_message("❌ Mauvaise réponse !", ephemeral=True)
         return button_callback
 
-@bot.tree.command(name="quiz", description="Lancer une question de quiz.")
-async def quiz(interaction: discord.Interaction):
+@bot.tree.command(name="quiz", description="Lancer une question de quiz avec une mention de rôle.")
+@app_commands.describe(role_a_mentionner="Rôle optionnel à mentionner pour le quiz")
+async def quiz(interaction: discord.Interaction, role_a_mentionner: discord.Role = None):
     if not bot.quiz_list:
         await interaction.response.send_message("❌ Aucun quiz disponible.", ephemeral=True)
         return
@@ -309,7 +319,10 @@ async def quiz(interaction: discord.Interaction):
     embed = discord.Embed(title="🧠 Quiz du serveur !", description=f"**{q_data['question']}**", color=discord.Color.blue())
     view = QuizView(q_data["options"], q_data["reponse"], q_data["question"])
 
-    await interaction.response.send_message(embed=embed, view=view)
+    content_text = f"{role_a_mentionner.mention} 🧠 **Nouveau Quiz disponible !**" if role_a_mentionner else None
+    allowed = discord.AllowedMentions(roles=True, everyone=True)
+
+    await interaction.response.send_message(content=content_text, embed=embed, view=view, allowed_mentions=allowed)
 
 
 # ==========================================
