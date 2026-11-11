@@ -19,7 +19,7 @@ class MarcoBot(commands.Bot):
                 "description": "Envoyer 5 messages dans les salons du serveur après avoir accepté la quête.", 
                 "recompense_or": 50,
                 "objectif_messages": 5,
-                "cooldown_heures": 24  # Temps d'attente en heures
+                "cooldown_heures": 24
             },
             {
                 "titre": "🎮 Jouer avec la communauté", 
@@ -75,8 +75,8 @@ class MarcoBot(commands.Bot):
         self.dernier_tirage = {}
         self.user_money = {}
         self.dernier_work = {}
-        self.dernieres_quetes = {} # (user_id, index_quete) -> datetime du dernier accomplissement
-        self.progression_messages = {} # user_id -> nombre de messages envoyés
+        self.dernieres_quetes = {}
+        self.progression_messages = {}
 
     async def setup_hook(self):
         GUILD_ID = discord.Object(id=1359606058922017001)
@@ -92,7 +92,7 @@ async def on_ready():
 
 
 # ==========================================
-# 0. ÉCOUTEUR AUTOMATIQUE DE MESSAGES (AVEC COOLDOWN DE QUÊTE)
+# 0. ÉCOUTEUR AUTOMATIQUE DE MESSAGES
 # ==========================================
 @bot.event
 async def on_message(message):
@@ -109,24 +109,21 @@ async def on_message(message):
 
         cle_suivi = (user_id, index_quete)
 
-        # Vérifier si la quête a été faite récemment et si le délai est toujours en cours
         if cle_suivi in bot.dernieres_quetes:
             dernier_temps = bot.dernieres_quetes[cle_suivi]
             if maintenant < dernier_temps + cooldown:
                 await bot.process_commands(message)
                 return
 
-        # Incrémenter la progression du joueur
         if user_id not in bot.progression_messages:
             bot.progression_messages[user_id] = 0
         
         bot.progression_messages[user_id] += 1
         objectif = quete.get("objectif_messages", 5)
 
-        # Si l'objectif est atteint
         if bot.progression_messages[user_id] >= objectif:
             bot.dernieres_quetes[cle_suivi] = maintenant
-            bot.progression_messages[user_id] = 0  # Réinitialisation du compteur
+            bot.progression_messages[user_id] = 0
 
             recompense = quete["recompense_or"]
             bot.user_money[user_id] = bot.user_money.get(user_id, 0) + recompense
@@ -144,7 +141,7 @@ async def on_message(message):
 
 
 # ==========================================
-# 1. GESTION DES QUÊTES AVEC VERIFICATION DU TEMPS RESTANT
+# 1. GESTION DES QUÊTES
 # ==========================================
 
 class DynamicQueteView(discord.ui.View):
@@ -174,7 +171,6 @@ class DynamicQueteView(discord.ui.View):
             cooldown = timedelta(hours=quete.get("cooldown_heures", 24))
             cle_suivi = (user_id, index)
 
-            # Vérifier si l'utilisateur doit attendre avant de la refaire
             if cle_suivi in self.bot_instance.dernieres_quetes:
                 dernier_accomplissement = self.bot_instance.dernieres_quetes[cle_suivi]
                 prochain_dispo = dernier_accomplissement + cooldown
@@ -184,7 +180,7 @@ class DynamicQueteView(discord.ui.View):
                     h = int(restant.total_seconds() // 3600)
                     m = int((restant.total_seconds() % 3600) // 60)
                     await interaction.response.send_message(
-                        f"⏳ Tu as déjà fait cette quête ! Tu dois attendre encore **{h}h et {m}min** avant de pouvoir la refaire.", 
+                        f"⏳ Tu as déjà fait cette quête ! Tu dois attendre encore **{h}h et {m}min**.", 
                         ephemeral=True
                     )
                     return
@@ -204,17 +200,28 @@ class DynamicQueteView(discord.ui.View):
 
         return button_callback
 
-@bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières et les accepter.")
-async def quetes_journalieres(interaction: discord.Interaction):
+@bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières.")
+@app_commands.choices(mention=[
+    app_commands.Choice(name="Aucune mention", value="none"),
+    app_commands.Choice(name="@everyone", value="everyone"),
+    app_commands.Choice(name="@here", value="here")
+])
+async def quetes_journalieres(interaction: discord.Interaction, mention: str = "none"):
     embed = discord.Embed(
         title="🌟 Quêtes Journalières",
-        description="Clique sur 'Accepter' pour lancer une quête. Une fois terminée, tu devras attendre avant de la refaire !",
+        description="Clique sur 'Accepter' pour lancer une quête !",
         color=discord.Color.gold()
     )
     
+    content_text = None
+    if mention == "everyone":
+        content_text = "@everyone 📢 Nouvelles quêtes disponibles !"
+    elif mention == "here":
+        content_text = "@here 📢 Nouvelles quêtes disponibles !"
+
     if not bot.quetes_list:
         embed.add_field(name="Aucune quête", value="Reviens plus tard !", inline=False)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(content=content_text, embed=embed)
     else:
         for i, q in enumerate(bot.quetes_list, start=1):
             embed.add_field(
@@ -224,7 +231,7 @@ async def quetes_journalieres(interaction: discord.Interaction):
             )
         
         view = DynamicQueteView(bot)
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(content=content_text, embed=embed, view=view)
 
 @bot.tree.command(name="ajouter_quete", description="[Admin] Ajouter une nouvelle quête journalière.")
 @app_commands.describe(titre="Titre", description="Description", recompense_or="Pièces d'or", cooldown_heures="Temps d'attente en heures")
@@ -237,22 +244,22 @@ async def ajouter_quete(interaction: discord.Interaction, titre: str, descriptio
         "objectif_messages": 5,
         "cooldown_heures": cooldown_heures
     })
-    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée avec un délai de {cooldown_heures}h !", ephemeral=True)
+    await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée !", ephemeral=True)
 
 @bot.tree.command(name="supprimer_quete", description="[Admin] Supprimer une quête via son numéro.")
-@app_commands.describe(numero="Numéro de la quête (ex: 1, 2...)")
+@app_commands.describe(numero="Numéro de la quête")
 @app_commands.checks.has_permissions(administrator=True)
 async def supprimer_quete(interaction: discord.Interaction, numero: int):
     index = numero - 1
     if 0 <= index < len(bot.quetes_list):
         quete_supprimee = bot.quetes_list.pop(index)
-        await interaction.response.send_message(f"🗑️ Quête **#{numero} - {quete_supprimee['titre']}** supprimée avec succès !", ephemeral=True)
+        await interaction.response.send_message(f"🗑️ Quête **#{numero} - {quete_supprimee['titre']}** supprimée !", ephemeral=True)
     else:
-        await interaction.response.send_message("❌ Numéro de quête invalide.", ephemeral=True)
+        await interaction.response.send_message("❌ Numéro invalide.", ephemeral=True)
 
 
 # ==========================================
-# 2. GESTION DES QUIZ
+# 2. GESTION DES QUIZ AVEC MENTIONS
 # ==========================================
 
 class QuizView(discord.ui.View):
@@ -282,15 +289,28 @@ class QuizView(discord.ui.View):
                 await interaction.response.send_message("❌ Mauvaise réponse !", ephemeral=True)
         return button_callback
 
-@bot.tree.command(name="quiz", description="Lancer une question de quiz.")
-async def quiz(interaction: discord.Interaction):
+@bot.tree.command(name="quiz", description="Lancer une question de quiz avec option de mention.")
+@app_commands.choices(mention=[
+    app_commands.Choice(name="Aucune mention", value="none"),
+    app_commands.Choice(name="@everyone", value="everyone"),
+    app_commands.Choice(name="@here", value="here")
+])
+async def quiz(interaction: discord.Interaction, mention: str = "none"):
     if not bot.quiz_list:
         await interaction.response.send_message("❌ Aucun quiz disponible.", ephemeral=True)
         return
+
     q_data = random.choice(bot.quiz_list)
     embed = discord.Embed(title="🧠 Quiz du serveur !", description=f"**{q_data['question']}**", color=discord.Color.blue())
     view = QuizView(q_data["options"], q_data["reponse"], q_data["question"])
-    await interaction.response.send_message(embed=embed, view=view)
+
+    content_text = None
+    if mention == "everyone":
+        content_text = "@everyone 🧠 **Nouveau Quiz disponible !**"
+    elif mention == "here":
+        content_text = "@here 🧠 **Nouveau Quiz disponible !**"
+
+    await interaction.response.send_message(content=content_text, embed=embed, view=view)
 
 
 # ==========================================
