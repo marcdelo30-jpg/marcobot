@@ -16,8 +16,9 @@ class MarcoBot(commands.Bot):
         self.quetes_list = [
             {
                 "titre": "💬 Participer au chat", 
-                "description": "Envoyer des messages dans les salons du serveur.", 
-                "recompense_or": 50
+                "description": "Envoyer 5 messages dans les salons du serveur après avoir accepté la quête.", 
+                "recompense_or": 50,
+                "objectif_messages": 5
             },
             {
                 "titre": "🎮 Jouer avec la communauté", 
@@ -73,6 +74,7 @@ class MarcoBot(commands.Bot):
         self.user_money = {}
         self.dernier_work = {}
         self.quetes_validees = {} # user_id -> liste des quêtes accomplies
+        self.progression_messages = {} # user_id -> nombre de messages envoyés pour la quête
 
     async def setup_hook(self):
         GUILD_ID = discord.Object(id=1359606058922017001)
@@ -88,7 +90,55 @@ async def on_ready():
 
 
 # ==========================================
-# 1. GESTION DES QUÊTES (AJOUT, SUPPRESSION, BOUTONS)
+# 0. ÉCOUTEUR AUTOMATIQUE DE MESSAGES (POUR LES QUÊTES)
+# ==========================================
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    user_id = message.author.id
+
+    # Vérifier si l'utilisateur a un rôle de quête ou participe à la quête #1 ("Participer au chat")
+    # On vérifie par exemple si la quête 0 existe
+    if len(bot.quetes_list) > 0:
+        index_quete = 0
+        quete = bot.quetes_list[index_quete]
+        aujourdhui = datetime.now().strftime("%Y-%m-%d")
+        cle_quete = f"{index_quete}_{aujourdhui}"
+
+        # Si l'utilisateur n'a pas encore validé cette quête aujourd'hui
+        if user_id not in bot.quetes_validees:
+            bot.quetes_validees[user_id] = []
+
+        if cle_quete not in bot.quetes_validees[user_id]:
+            # Incrémenter le compteur de messages de l'utilisateur
+            if user_id not in bot.progression_messages:
+                bot.progression_messages[user_id] = 0
+            
+            bot.progression_messages[user_id] += 1
+            objectif = quete.get("objectif_messages", 5)
+
+            # Si l'objectif est atteint
+            if bot.progression_messages[user_id] >= objectif:
+                bot.quetes_validees[user_id].append(cle_quete)
+                bot.progression_messages[user_id] = 0 # Reset
+
+                recompense = quete["recompense_or"]
+                if user_id not in bot.user_money:
+                    bot.user_money[user_id] = 0
+                bot.user_money[user_id] += recompense
+
+                try:
+                    await message.author.send(f"🎉 **Quête accomplie automatiquement !**\nTu as envoyé assez de messages pour valider : **{quete['titre']}**.\nTu gagnes **{recompense} pièces d'or** !")
+                except discord.HTTPException:
+                    pass
+
+    await bot.process_commands(message)
+
+
+# ==========================================
+# 1. GESTION DES QUÊTES AVEC BOUTON D'ACCEPTATION ET RÔLE
 # ==========================================
 
 class DynamicQueteView(discord.ui.View):
@@ -98,9 +148,9 @@ class DynamicQueteView(discord.ui.View):
 
         for index, quete in enumerate(self.bot_instance.quetes_list):
             button = discord.ui.Button(
-                label=f"🎁 Réclamer : {quete['titre']}", 
-                style=discord.ButtonStyle.green, 
-                custom_id=f"quete_dyn_{index}"
+                label=f"⚔️ Accepter : {quete['titre']}", 
+                style=discord.ButtonStyle.blurple, 
+                custom_id=f"quete_accepter_{index}"
             )
             button.callback = self.create_callback(index)
             self.add_item(button)
@@ -108,6 +158,7 @@ class DynamicQueteView(discord.ui.View):
     def create_callback(self, index):
         async def button_callback(interaction: discord.Interaction):
             user_id = interaction.user.id
+            guild = interaction.guild
             
             if index >= len(self.bot_instance.quetes_list):
                 await interaction.response.send_message("❌ Cette quête n'existe plus.", ephemeral=True)
@@ -115,38 +166,26 @@ class DynamicQueteView(discord.ui.View):
 
             quete = self.bot_instance.quetes_list[index]
 
-            if user_id not in self.bot_instance.quetes_validees:
-                self.bot_instance.quetes_validees[user_id] = []
+            # Optionnel : Attribuer un rôle "Aventurier" ou lié à la quête pour que le bot le reconnaisse
+            role = discord.utils.get(guild.roles, name="Aventurier")
+            if role and role not in interaction.user.roles:
+                try:
+                    await interaction.user.add_roles(role)
+                except discord.HTTPException:
+                    pass
 
-            aujourdhui = datetime.now().strftime("%Y-%m-%d")
-            cle_quete = f"{index}_{aujourdhui}"
-
-            if cle_quete in self.bot_instance.quetes_validees[user_id]:
-                await interaction.response.send_message("⏳ Tu as déjà validé cette quête aujourd'hui ! Reviens demain.", ephemeral=True)
-                return
-
-            self.bot_instance.quetes_validees[user_id].append(cle_quete)
-            
-            recompense = quete["recompense_or"]
-            if user_id not in self.bot_instance.user_money:
-                self.bot_instance.user_money[user_id] = 0
-            self.bot_instance.user_money[user_id] += recompense
-
-            embed = discord.Embed(
-                title="🎉 Quête validée avec succès !",
-                description=f"Tu as accompli la quête : **{quete['titre']}** !\nTu remportes **{recompense} pièces d'or**.",
-                color=discord.Color.gold()
+            await interaction.response.send_message(
+                f"🛡️ Tu as accepté la quête **{quete['titre']}** !\nLe bot surveille désormais tes actions sur le serveur pour valider ton objectif.", 
+                ephemeral=True
             )
-            embed.add_field(name="Nouveau solde", value=f"**{self.bot_instance.user_money[user_id]} pièces d'or**", inline=False)
-            await interaction.response.send_message(embed=embed, ephemeral=True)
 
         return button_callback
 
-@bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières et récupérer tes récompenses.")
+@bot.tree.command(name="quetes_journalieres", description="Voir les quêtes journalières et les accepter.")
 async def quetes_journalieres(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🌟 Quêtes Journalières",
-        description="Accomplis les objectifs ci-dessous et clique sur le bouton correspondant pour récupérer ton or !",
+        description="Clique sur 'Accepter' pour lancer le suivi automatique de ta quête par le bot !",
         color=discord.Color.gold()
     )
     
@@ -168,7 +207,7 @@ async def quetes_journalieres(interaction: discord.Interaction):
 @app_commands.describe(titre="Titre de la quête", description="Description", recompense_or="Montant en pièces d'or")
 @app_commands.checks.has_permissions(administrator=True)
 async def ajouter_quete(interaction: discord.Interaction, titre: str, description: str, recompense_or: int):
-    bot.quetes_list.append({"titre": titre, "description": description, "recompense_or": recompense_or})
+    bot.quetes_list.append({"titre": titre, "description": description, "recompense_or": recompense_or, "objectif_messages": 5})
     await interaction.response.send_message(f"✅ Quête **{titre}** ajoutée avec succès !", ephemeral=True)
 
 @bot.tree.command(name="supprimer_quete", description="[Admin] Supprimer une quête via son numéro.")
@@ -180,7 +219,7 @@ async def supprimer_quete(interaction: discord.Interaction, numero: int):
         quete_supprimee = bot.quetes_list.pop(index)
         await interaction.response.send_message(f"🗑️ Quête **#{numero} - {quete_supprimee['titre']}** supprimée avec succès !", ephemeral=True)
     else:
-        await interaction.response.send_message("❌ Numéro de quête invalide. Vérifie le numéro avec `/quetes_journalieres`.", ephemeral=True)
+        await interaction.response.send_message("❌ Numéro de quête invalide.", ephemeral=True)
 
 
 # ==========================================
@@ -318,6 +357,7 @@ async def pile_ou_face(interaction: discord.Interaction, choix: str, mise: int):
         bot.user_money[user_id] += mise
         embed = discord.Embed(title="🎉 Gagné !", description=f"C'était **{resultat}** ! Tu gagnes +{mise} pièces.", color=discord.Color.green())
     else:
+        bot.user_money.get(user_id, 0)
         bot.user_money[user_id] -= mise
         embed = discord.Embed(title="😢 Perdu...", description=f"C'était **{resultat}**... Tu perds -{mise} pièces.", color=discord.Color.red())
     
