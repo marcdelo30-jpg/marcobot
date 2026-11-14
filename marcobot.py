@@ -11,9 +11,10 @@ intents.members = True
 intents.voice_states = True
 
 # ----------------------------------------------------
-# REMPLACE CET ID PAR L'ID DU SALON OÙ TU VEUX LES LOGS
+# CONFIGURATION DES IDS DE SALONS (À remplacer par les vôtres)
 # ----------------------------------------------------
-ID_SALON_LOGS_QUETES = 1570182850056294471
+ID_SALON_LOGS_QUETES = 1234567890123456789  # Salon où s'annoncent les réussites de quêtes
+ID_SALON_BOUTIQUE = 9876543210987654321     # Salon réservé uniquement à la boutique
 
 class MarcoBot(commands.Bot):
     def __init__(self):
@@ -80,6 +81,19 @@ class MarcoBot(commands.Bot):
             }
         ]
 
+        self.boutique_list = [
+            {
+                "nom": "Rôle VIP 1 Semaine", 
+                "description": "Accès au salon exclusif VIP pendant 7 jours.", 
+                "prix": 500
+            },
+            {
+                "nom": "Potion de Chance", 
+                "description": "Un objet collector mystère.", 
+                "prix": 200
+            }
+        ]
+
         self.user_inventories = {}
         self.dernier_tirage = {}
         self.user_money = {}
@@ -88,12 +102,100 @@ class MarcoBot(commands.Bot):
         self.progression_messages = {}
 
     async def setup_hook(self):
+        # Enregistre la vue persistante pour que le bouton boutique marche même après redémarrage
+        self.add_view(PanneauBoutiqueView(self))
+        
         GUILD_ID = discord.Object(id=1359606058922017001)
         self.tree.copy_global_to(guild=GUILD_ID)
         await self.tree.sync(guild=GUILD_ID)
-        print("Commandes synchronisées avec succès !")
+        print("Commandes et vues persistantes synchronisées avec succès !")
 
-# CREATION DE L'OBJET BOT EN PREMIER
+
+# ==========================================
+# VUES PERSISTANTES & INTERACTIVES DE LA BOUTIQUE
+# ==========================================
+
+class AchatBoutiqueView(discord.ui.View):
+    """Vue éphémère avec les boutons pour acheter directement chaque article."""
+    def __init__(self, bot_instance):
+        super().__init__(timeout=120.0)
+        self.bot_instance = bot_instance
+
+        for index, article in enumerate(self.bot_instance.boutique_list):
+            button = discord.ui.Button(
+                label=f"Acheter #{index + 1} ({article['prix']} 🪙)",
+                style=discord.ButtonStyle.green
+            )
+            button.callback = self.create_buy_callback(index)
+            self.add_item(button)
+
+    def create_buy_callback(self, index):
+        async def buy_callback(interaction: discord.Interaction):
+            if not (0 <= index < len(self.bot_instance.boutique_list)):
+                await interaction.response.send_message("❌ Cet article n'est plus disponible.", ephemeral=True)
+                return
+
+            article = self.bot_instance.boutique_list[index]
+            user_id = interaction.user.id
+            solde_actuel = self.bot_instance.user_money.get(user_id, 0)
+
+            if solde_actuel < article["prix"]:
+                await interaction.response.send_message(
+                    f"❌ Solde insuffisant ! Tu as **{solde_actuel} pièces**, mais **{article['nom']}** coûte **{article['prix']} pièces**.",
+                    ephemeral=True
+                )
+                return
+
+            self.bot_instance.user_money[user_id] -= article["prix"]
+            if user_id not in self.bot_instance.user_inventories:
+                self.bot_instance.user_inventories[user_id] = []
+
+            self.bot_instance.user_inventories[user_id].append({
+                "nom": article["nom"],
+                "rarete": "Boutique",
+                "description": article["description"],
+                "image": "https://images.unsplash.com/photo-1513151233558-d860c5398176?w=500"
+            })
+
+            await interaction.response.send_message(
+                f"🎉 Achat réussi ! Tu as acheté **{article['nom']}** pour **{article['prix']} pièces d'or**.\nIl a été ajouté à ton `/inventaire` !",
+                ephemeral=True
+            )
+        return buy_callback
+
+
+class PanneauBoutiqueView(discord.ui.View):
+    """Bouton permanent affiché dans le salon boutique."""
+    def __init__(self, bot_instance):
+        super().__init__(timeout=None)
+        self.bot_instance = bot_instance
+
+    @discord.ui.button(label="🛒 Ouvrir la Boutique", style=discord.ButtonStyle.blurple, custom_id="persistent_open_boutique")
+    async def open_boutique(self, interaction: discord.Interaction, button: discord.ui.Button):
+        solde_user = self.bot_instance.user_money.get(interaction.user.id, 0)
+        embed = discord.Embed(
+            title="🛒 Catalogue de la Boutique",
+            description=f"💰 Ton solde actuel : **{solde_user} pièces d'or**\nClique sur un bouton ci-dessous pour acheter un article !",
+            color=discord.Color.purple()
+        )
+
+        if not self.bot_instance.boutique_list:
+            embed.add_field(name="Boutique vide", value="Aucun article disponible pour le moment.", inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        for idx, article in enumerate(self.bot_instance.boutique_list, start=1):
+            embed.add_field(
+                name=f"#{idx} - {article['nom']} (🪙 {article['prix']} or)",
+                value=article['description'],
+                inline=False
+            )
+
+        view = AchatBoutiqueView(self.bot_instance)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+# CRÉATION DE L'OBJET BOT EN PREMIER
 bot = MarcoBot()
 
 @bot.event
@@ -101,7 +203,6 @@ async def on_ready():
     print(f"Connecté en tant que {bot.user} (ID: {bot.user.id})")
 
 
-# Fonction utilitaire pour récupérer le salon cible
 def get_log_channel(guild, fallback_channel=None):
     channel = guild.get_channel(ID_SALON_LOGS_QUETES)
     if channel:
@@ -209,7 +310,7 @@ class DynamicQueteView(discord.ui.View):
                 if maintenant < self.bot_instance.dernieres_quetes[cle_suivi] + cooldown:
                     est_en_cooldown = True
 
-            label_texte = f"✅ Déjà accomplie" if est_en_cooldown else f"📜 {quete['titre']}"
+            label_texte = "✅ Déjà accomplie" if est_en_cooldown else f"📜 {quete['titre']}"
             
             button = discord.ui.Button(
                 label=label_texte, 
@@ -397,7 +498,7 @@ async def inventaire(interaction: discord.Interaction):
 
 
 # ==========================================
-# 4. ÉCONOMIE (/work, /solde, /pile_ou_face)
+# 4. ÉCONOMIE & BOUTIQUE PERMANENTE
 # ==========================================
 
 @bot.tree.command(name="solde", description="Voir ton solde.")
@@ -442,6 +543,42 @@ async def pile_ou_face(interaction: discord.Interaction, choix: str, mise: int):
         embed = discord.Embed(title="😢 Perdu...", description=f"C'était **{resultat}**... Tu perds -{mise} pièces.", color=discord.Color.red())
     
     await interaction.response.send_message(embed=embed)
+
+
+# --- COMMANDES ADMIN DE LA BOUTIQUE ---
+
+@bot.tree.command(name="panneau_boutique", description="[Admin] Poster le message permanent avec le bouton de la boutique.")
+@app_commands.checks.has_permissions(administrator=True)
+async def panneau_boutique(interaction: discord.Interaction):
+    if interaction.channel_id != ID_SALON_BOUTIQUE:
+        await interaction.response.send_message(f"❌ Utilise cette commande dans le salon dédié : <#{ID_SALON_BOUTIQUE}>", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title="🏪 Bienvenue dans la Boutique Officielle !",
+        description="Dépense tes pièces d'or gagnées grâce aux quêtes et aux mini-jeux !\n\nAppuie sur le bouton **🛒 Ouvrir la Boutique** ci-dessous pour consulter les articles et acheter.",
+        color=discord.Color.gold()
+    )
+    await interaction.channel.send(embed=embed, view=PanneauBoutiqueView(bot))
+    await interaction.response.send_message("✅ Panneau permanent de la boutique installé !", ephemeral=True)
+
+@bot.tree.command(name="ajouter_objet_boutique", description="[Admin] Ajouter un objet dans la boutique.")
+@app_commands.describe(nom="Nom de l'objet", description="Description de l'objet", prix="Prix en pièces d'or")
+@app_commands.checks.has_permissions(administrator=True)
+async def ajouter_objet_boutique(interaction: discord.Interaction, nom: str, description: str, prix: int):
+    bot.boutique_list.append({"nom": nom, "description": description, "prix": prix})
+    await interaction.response.send_message(f"✅ L'objet **{nom}** a été ajouté à la boutique pour **{prix} pièces d'or** !", ephemeral=True)
+
+@bot.tree.command(name="supprimer_objet_boutique", description="[Admin] Supprimer un objet de la boutique.")
+@app_commands.describe(numero="Numéro de l'article à retirer")
+@app_commands.checks.has_permissions(administrator=True)
+async def supprimer_objet_boutique(interaction: discord.Interaction, numero: int):
+    index = numero - 1
+    if 0 <= index < len(bot.boutique_list):
+        objet_retire = bot.boutique_list.pop(index)
+        await interaction.response.send_message(f"🗑️ L'article **{objet_retire['nom']}** a été retiré de la boutique.", ephemeral=True)
+    else:
+        await interaction.response.send_message("❌ Numéro d'article invalide.", ephemeral=True)
 
 
 TOKEN = os.getenv("DISCORD_TOKEN")
