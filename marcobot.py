@@ -13,7 +13,7 @@ intents.voice_states = True
 # ----------------------------------------------------
 # CONFIGURATION DES IDS DE SALONS (À remplacer par les vôtres)
 # ----------------------------------------------------
-ID_SALON_LOGS_QUETES = 1571278306655867081  # Salon où s'annoncent les réussites de quêtes
+ID_SALON_LOGS_QUETES = 1570182850056294471  # Salon où s'annoncent les réussites de quêtes
 ID_SALON_BOUTIQUE = 9876543210987654321     # Salon réservé uniquement à la boutique
 
 class MarcoBot(commands.Bot):
