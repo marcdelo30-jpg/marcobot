@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import os
 import random
@@ -13,8 +13,8 @@ intents.voice_states = True
 # ----------------------------------------------------
 # CONFIGURATION DES IDS DE SALONS (À remplacer par les vôtres)
 # ----------------------------------------------------
-ID_SALON_LOGS_QUETES = 1570182850056294471, 1571163591690817647  # Salon où s'annoncent les réussites de quêtes
-ID_SALON_BOUTIQUE = 1571278306655867081    # Salon réservé uniquement à la boutique
+ID_SALON_LOGS_QUETES = 1234567890123456789, 1571278306655867081 # Salon où s'annoncent les réussites de quêtes
+ID_SALON_BOUTIQUE = 9876543210987654321     # Salon réservé uniquement à la boutique
 
 class MarcoBot(commands.Bot):
     def __init__(self):
@@ -83,17 +83,18 @@ class MarcoBot(commands.Bot):
 
         self.boutique_list = [
             {
-                "nom": "Rôle VIP 1 Semaine", 
-                "description": "Accès au salon exclusif VIP pendant 7 jours.", 
-                "prix": 500
-            },
-            {
-                "nom": "Potion de Chance", 
-                "description": "Un objet collector mystère.", 
-                "prix": 200
+                "nom": "Badge VIP Collector", 
+                "description": "Un objet collector prestigieux dans ton inventaire.", 
+                "prix": 250,
+                "type_recompense": "objet",
+                "role_id": None,
+                "duree_totale_minutes": None,
+                "duree_affichage": None,
+                "bonus_or": 0
             }
         ]
 
+        self.roles_temporaires = []
         self.user_inventories = {}
         self.dernier_tirage = {}
         self.user_money = {}
@@ -102,21 +103,47 @@ class MarcoBot(commands.Bot):
         self.progression_messages = {}
 
     async def setup_hook(self):
-        # Enregistre la vue persistante pour que le bouton boutique marche même après redémarrage
         self.add_view(PanneauBoutiqueView(self))
+        self.verifier_roles_expires.start()
         
         GUILD_ID = discord.Object(id=1359606058922017001)
         self.tree.copy_global_to(guild=GUILD_ID)
         await self.tree.sync(guild=GUILD_ID)
-        print("Commandes et vues persistantes synchronisées avec succès !")
+        print("Commandes, vues persistantes et tâches synchronisées avec succès !")
+
+    @tasks.loop(minutes=1)
+    async def verifier_roles_expires(self):
+        """Vérifie chaque minute si un rôle temporaire acheté a expiré."""
+        maintenant = datetime.now()
+        a_conserver = []
+
+        for item in self.roles_temporaires:
+            if maintenant >= item["expiration"]:
+                guild = self.get_guild(item["guild_id"])
+                if guild:
+                    member = guild.get_member(item["user_id"])
+                    role = guild.get_role(item["role_id"])
+                    if member and role and role in member.roles:
+                        try:
+                            await member.remove_roles(role, reason="Expiration du rôle temporaire (Boutique)")
+                            await member.send(f"⏳ Ton rôle temporaire **{role.name}** sur **{guild.name}** vient d'expirer.")
+                        except (discord.Forbidden, discord.HTTPException):
+                            pass
+            else:
+                a_conserver.append(item)
+
+        self.roles_temporaires = a_conserver
+
+    @verifier_roles_expires.before_loop
+    async def before_verifier_roles(self):
+        await self.wait_until_ready()
 
 
 # ==========================================
-# VUES PERSISTANTES & INTERACTIVES DE LA BOUTIQUE
+# VUES DE LA BOUTIQUE & ACHAT
 # ==========================================
 
 class AchatBoutiqueView(discord.ui.View):
-    """Vue éphémère avec les boutons pour acheter directement chaque article."""
     def __init__(self, bot_instance):
         super().__init__(timeout=120.0)
         self.bot_instance = bot_instance
@@ -147,6 +174,38 @@ class AchatBoutiqueView(discord.ui.View):
                 return
 
             self.bot_instance.user_money[user_id] -= article["prix"]
+            type_rec = article.get("type_recompense", "objet")
+            details_rec = ""
+
+            # 1. Rôle à durée illimitée ou limitée
+            if type_rec in ["role_illimite", "role_limite"] and article.get("role_id"):
+                role = interaction.guild.get_role(article["role_id"])
+                if role:
+                    try:
+                        await interaction.user.add_roles(role, reason=f"Achat boutique : {article['nom']}")
+                        if type_rec == "role_limite" and article.get("duree_totale_minutes"):
+                            minutes = article["duree_totale_minutes"]
+                            affichage = article.get("duree_affichage", f"{minutes} min")
+                            expiration = datetime.now() + timedelta(minutes=minutes)
+                            self.bot_instance.roles_temporaires.append({
+                                "guild_id": interaction.guild.id,
+                                "user_id": user_id,
+                                "role_id": role.id,
+                                "expiration": expiration
+                            })
+                            details_rec = f"\n⏳ Le rôle **{role.name}** t'a été attribué pendant **{affichage}** !"
+                        else:
+                            details_rec = f"\n♾️ Le rôle **{role.name}** t'a été attribué de façon **illimitée** !"
+                    except discord.Forbidden:
+                        details_rec = f"\n⚠️ Le bot n'a pas la permission de donner le rôle **{role.name}** (place le rôle du bot tout en haut)."
+
+            # 2. Bonus d'or
+            elif type_rec == "or":
+                gain_bonus = article.get("bonus_or", 0)
+                self.bot_instance.user_money[user_id] += gain_bonus
+                details_rec = f"\n💰 Tu as reçu un coffre contenant **{gain_bonus} pièces d'or** !"
+
+            # 3. Ajout dans l'inventaire
             if user_id not in self.bot_instance.user_inventories:
                 self.bot_instance.user_inventories[user_id] = []
 
@@ -158,14 +217,13 @@ class AchatBoutiqueView(discord.ui.View):
             })
 
             await interaction.response.send_message(
-                f"🎉 Achat réussi ! Tu as acheté **{article['nom']}** pour **{article['prix']} pièces d'or**.\nIl a été ajouté à ton `/inventaire` !",
+                f"🎉 Achat validé : **{article['nom']}** pour **{article['prix']} pièces d'or** !{details_rec}",
                 ephemeral=True
             )
         return buy_callback
 
 
 class PanneauBoutiqueView(discord.ui.View):
-    """Bouton permanent affiché dans le salon boutique."""
     def __init__(self, bot_instance):
         super().__init__(timeout=None)
         self.bot_instance = bot_instance
@@ -174,8 +232,8 @@ class PanneauBoutiqueView(discord.ui.View):
     async def open_boutique(self, interaction: discord.Interaction, button: discord.ui.Button):
         solde_user = self.bot_instance.user_money.get(interaction.user.id, 0)
         embed = discord.Embed(
-            title="🛒 Catalogue de la Boutique",
-            description=f"💰 Ton solde actuel : **{solde_user} pièces d'or**\nClique sur un bouton ci-dessous pour acheter un article !",
+            title="🏪 Boutique des Accessoires & Récompenses",
+            description=f"💰 Ton solde actuel : **{solde_user} pièces d'or**\nClique sur un bouton vert ci-dessous pour acheter !",
             color=discord.Color.purple()
         )
 
@@ -185,9 +243,26 @@ class PanneauBoutiqueView(discord.ui.View):
             return
 
         for idx, article in enumerate(self.bot_instance.boutique_list, start=1):
+            type_rec = article.get("type_recompense", "objet")
+            badge_recompense = ""
+
+            if type_rec == "role_illimite" and article.get("role_id") and interaction.guild:
+                role = interaction.guild.get_role(article["role_id"])
+                if role:
+                    badge_recompense = f"\n♾️ **Récompense :** Rôle {role.mention} (Illimité)"
+            elif type_rec == "role_limite" and article.get("role_id") and interaction.guild:
+                role = interaction.guild.get_role(article["role_id"])
+                if role:
+                    affichage = article.get("duree_affichage", f"{article.get('duree_totale_minutes')} min")
+                    badge_recompense = f"\n⏳ **Récompense :** Rôle {role.mention} (Durée : **{affichage}**)"
+            elif type_rec == "or":
+                badge_recompense = f"\n💰 **Récompense :** +{article.get('bonus_or', 0)} pièces d'or"
+            else:
+                badge_recompense = "\n🎒 **Récompense :** Objet collector dans l'inventaire"
+
             embed.add_field(
                 name=f"#{idx} - {article['nom']} (🪙 {article['prix']} or)",
-                value=article['description'],
+                value=f"{article['description']}{badge_recompense}",
                 inline=False
             )
 
@@ -498,7 +573,7 @@ async def inventaire(interaction: discord.Interaction):
 
 
 # ==========================================
-# 4. ÉCONOMIE & BOUTIQUE PERMANENTE
+# 4. ÉCONOMIE & BOUTIQUE AVEC DURÉE AU CHOIX
 # ==========================================
 
 @bot.tree.command(name="solde", description="Voir ton solde.")
@@ -555,21 +630,108 @@ async def panneau_boutique(interaction: discord.Interaction):
         return
 
     embed = discord.Embed(
-        title="🏪 Bienvenue dans la Boutique Officielle !",
-        description="Dépense tes pièces d'or gagnées grâce aux quêtes et aux mini-jeux !\n\nAppuie sur le bouton **🛒 Ouvrir la Boutique** ci-dessous pour consulter les articles et acheter.",
+        title="🏪 Boutique des Accessoires & Récompenses",
+        description="Dépense tes pièces d'or pour obtenir des rôles exclusifs (temporaires ou permanents), des coffres d'or et des objets collectors !\n\nAppuie sur **🛒 Ouvrir la Boutique** ci-dessous.",
         color=discord.Color.gold()
     )
     await interaction.channel.send(embed=embed, view=PanneauBoutiqueView(bot))
     await interaction.response.send_message("✅ Panneau permanent de la boutique installé !", ephemeral=True)
 
-@bot.tree.command(name="ajouter_objet_boutique", description="[Admin] Ajouter un objet dans la boutique.")
-@app_commands.describe(nom="Nom de l'objet", description="Description de l'objet", prix="Prix en pièces d'or")
-@app_commands.checks.has_permissions(administrator=True)
-async def ajouter_objet_boutique(interaction: discord.Interaction, nom: str, description: str, prix: int):
-    bot.boutique_list.append({"nom": nom, "description": description, "prix": prix})
-    await interaction.response.send_message(f"✅ L'objet **{nom}** a été ajouté à la boutique pour **{prix} pièces d'or** !", ephemeral=True)
 
-@bot.tree.command(name="supprimer_objet_boutique", description="[Admin] Supprimer un objet de la boutique.")
+@bot.tree.command(name="ajouter_objet_boutique", description="[Admin] Créer un objet, sa récompense et sa durée au choix.")
+@app_commands.describe(
+    nom="Nom de l'objet ou accessoire",
+    description="Description affichée dans la boutique",
+    prix="Prix en pièces d'or",
+    type_recompense="Choisis le type de récompense accordé à l'achat",
+    role_donne="Le rôle à donner (si rôle limité ou illimité)",
+    duree_valeur="Nombre de minutes, d'heures ou de jours (ex: 30, 2, 7)",
+    unite_duree="Choisis l'unité de temps (Minutes, Heures ou Jours)",
+    bonus_or="Montant d'or gagné (si Bonus d'Or)"
+)
+@app_commands.choices(
+    type_recompense=[
+        app_commands.Choice(name="♾️ Rôle à durée illimitée", value="role_illimite"),
+        app_commands.Choice(name="⏳ Rôle à durée limitée", value="role_limite"),
+        app_commands.Choice(name="🎒 Objet Collector (Inventaire)", value="objet"),
+        app_commands.Choice(name="💰 Bonus d'Or", value="or")
+    ],
+    unite_duree=[
+        app_commands.Choice(name="Minutes", value="minutes"),
+        app_commands.Choice(name="Heures", value="heures"),
+        app_commands.Choice(name="Jours", value="jours")
+    ]
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def ajouter_objet_boutique(
+    interaction: discord.Interaction,
+    nom: str,
+    description: str,
+    prix: int,
+    type_recompense: str,
+    role_donne: discord.Role = None,
+    duree_valeur: int = None,
+    unite_duree: str = "heures",
+    bonus_or: int = 0
+):
+    if prix <= 0:
+        await interaction.response.send_message("❌ Le prix doit être supérieur à 0.", ephemeral=True)
+        return
+
+    if type_recompense in ["role_illimite", "role_limite"] and not role_donne:
+        await interaction.response.send_message("❌ Tu dois sélectionner un rôle dans `role_donne` !", ephemeral=True)
+        return
+
+    duree_totale_minutes = None
+    duree_affichage = None
+
+    if type_recompense == "role_limite":
+        if not duree_valeur or duree_valeur <= 0:
+            await interaction.response.send_message("❌ Tu dois indiquer un nombre dans `duree_valeur` supérieur à 0 !", ephemeral=True)
+            return
+        
+        if unite_duree == "minutes":
+            duree_totale_minutes = duree_valeur
+            duree_affichage = f"{duree_valeur} minute(s)"
+        elif unite_duree == "heures":
+            duree_totale_minutes = duree_valeur * 60
+            duree_affichage = f"{duree_valeur} heure(s)"
+        elif unite_duree == "jours":
+            duree_totale_minutes = duree_valeur * 1440
+            duree_affichage = f"{duree_valeur} jour(s)"
+
+    if type_recompense == "or" and bonus_or <= 0:
+        await interaction.response.send_message("❌ Tu dois indiquer un montant dans `bonus_or` supérieur à 0 !", ephemeral=True)
+        return
+
+    bot.boutique_list.append({
+        "nom": nom,
+        "description": description,
+        "prix": prix,
+        "type_recompense": type_recompense,
+        "role_id": role_donne.id if role_donne else None,
+        "duree_totale_minutes": duree_totale_minutes,
+        "duree_affichage": duree_affichage,
+        "bonus_or": bonus_or if type_recompense == "or" else 0
+    })
+
+    resume = ""
+    if type_recompense == "role_illimite":
+        resume = f"♾️ Rôle illimité : {role_donne.mention}"
+    elif type_recompense == "role_limite":
+        resume = f"⏳ Rôle temporaire : {role_donne.mention} pendant **{duree_affichage}**"
+    elif type_recompense == "or":
+        resume = f"💰 Bonus de **{bonus_or} pièces d'or**"
+    else:
+        resume = "🎒 Objet collector"
+
+    await interaction.response.send_message(
+        f"✅ Article **{nom}** ajouté à la boutique pour **{prix} pièces d'or** !\n**Récompense configurée :** {resume}",
+        ephemeral=True
+    )
+
+
+@bot.tree.command(name="supprimer_objet_boutique", description="[Admin] Supprimer un article de la boutique.")
 @app_commands.describe(numero="Numéro de l'article à retirer")
 @app_commands.checks.has_permissions(administrator=True)
 async def supprimer_objet_boutique(interaction: discord.Interaction, numero: int):
